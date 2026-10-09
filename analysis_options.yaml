@@ -1,0 +1,12 @@
+analyzer:
+  errors:
+    deprecated_member_use: ignore
+    experimental_member_use: ignore
+  exclude:
+    - "_legacy_cashew_code/**"
+    - "packages/**"
+    - "**/*.g.dart"
+
+linter:
+  rules:
+    avoid_print: false
