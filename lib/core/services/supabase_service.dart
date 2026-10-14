@@ -15,6 +15,7 @@ class SupabaseService {
   SupabaseClient? get client => _client;
 
   Future<void> initialize() async {
+    await SupabaseConfig.loadConfig();
     if (!SupabaseConfig.isConfigured) {
       debugPrint('Supabase chưa được điền URL/Anon Key. Đang hoạt động ở chế độ chờ cấu hình.');
       return;
@@ -31,6 +32,22 @@ class SupabaseService {
     } catch (e) {
       debugPrint('Lỗi khởi tạo Supabase: $e');
       _isInitialized = false;
+    }
+  }
+
+  Future<bool> updateConfiguration(String url, String anonKey) async {
+    await SupabaseConfig.updateConfig(url, anonKey);
+    try {
+      await Supabase.initialize(
+        url: url.trim(),
+        anonKey: anonKey.trim(),
+      );
+      _client = Supabase.instance.client;
+      _isInitialized = true;
+      return true;
+    } catch (e) {
+      debugPrint('Lỗi cập nhật cấu hình Supabase: $e');
+      return false;
     }
   }
 

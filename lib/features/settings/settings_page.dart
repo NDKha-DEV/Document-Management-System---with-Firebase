@@ -9,6 +9,8 @@ import '../../database/study_database.dart';
 import '../../database/default_data.dart';
 import '../../core/services/auth_service.dart';
 import '../../core/services/cloud_sync_service.dart';
+import '../../core/config/supabase_config.dart';
+import '../../core/services/supabase_service.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -123,6 +125,10 @@ class _SettingsPageState extends State<SettingsPage> {
         children: [
           // Mục 1: Đăng nhập Google & Đồng bộ Đám mây (Firebase)
           _buildCloudAuthCard(db),
+          const SizedBox(height: 14),
+
+          // Mục 1.1: Trạng thái & Cấu hình Supabase Cloud (Chia sẻ & RLS)
+          _buildSupabaseConfigCard(),
           const SizedBox(height: 20),
 
           // Mục 2: Thống kê tổng quan học tập
@@ -430,6 +436,186 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
         );
       },
+    );
+  }
+
+  Widget _buildSupabaseConfigCard() {
+    final isConfigured = SupabaseConfig.isConfigured;
+
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(
+          color: isConfigured ? Colors.deepPurple.shade200 : Colors.amber.shade300,
+        ),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.deepPurple.shade50,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(Icons.hub_rounded, color: Colors.deepPurple, size: 28),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Text(
+                            'Supabase Cloud (RLS & Chia Sẻ)',
+                            style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                          ),
+                          const SizedBox(width: 6),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: isConfigured ? Colors.green.shade50 : Colors.amber.shade50,
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text(
+                              isConfigured ? 'Đã kết nối' : 'Chờ cấu hình',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                                color: isConfigured ? Colors.green.shade700 : Colors.amber.shade800,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        isConfigured
+                            ? 'URL: ${SupabaseConfig.supabaseUrl}'
+                            : 'Nhập Project URL & Anon Key để kích hoạt chia sẻ',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.deepPurple,
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+                icon: const Icon(Icons.settings_suggest_rounded, size: 18),
+                label: Text(isConfigured ? 'Xem / Cập nhật cấu hình Supabase' : 'Cấu hình Supabase Cloud ngay'),
+                onPressed: _showSupabaseConfigDialog,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showSupabaseConfigDialog() {
+    final urlController = TextEditingController(
+      text: SupabaseConfig.supabaseUrl == 'https://xyzcompany.supabase.co' ? '' : SupabaseConfig.supabaseUrl,
+    );
+    final keyController = TextEditingController(
+      text: SupabaseConfig.supabaseAnonKey.startsWith('eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...') ? '' : SupabaseConfig.supabaseAnonKey,
+    );
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.hub_rounded, color: Colors.deepPurple),
+            SizedBox(width: 8),
+            Text('Cấu Hình Supabase'),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Lấy từ Supabase Console > Project Settings > API:',
+                style: TextStyle(fontSize: 13, color: Colors.grey),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: urlController,
+                decoration: const InputDecoration(
+                  labelText: 'Project URL',
+                  hintText: 'https://xxx.supabase.co',
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.link),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: keyController,
+                maxLines: 2,
+                decoration: const InputDecoration(
+                  labelText: 'anon public key',
+                  hintText: 'eyJhbGciOi...',
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.key),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Hủy'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.deepPurple,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () async {
+              final url = urlController.text.trim();
+              final key = keyController.text.trim();
+              if (url.isEmpty || key.isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Vui lòng nhập đủ URL và anon key')),
+                );
+                return;
+              }
+              Navigator.pop(ctx);
+              final ok = await SupabaseService().updateConfiguration(url, key);
+              if (mounted) {
+                setState(() {});
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    backgroundColor: ok ? Colors.green : Colors.red,
+                    content: Text(ok
+                        ? 'Đã lưu cấu hình Supabase thành công!'
+                        : 'Khởi tạo Supabase thất bại, vui lòng kiểm tra URL/Key.'),
+                  ),
+                );
+              }
+            },
+            child: const Text('Lưu & Kết Nối'),
+          ),
+        ],
+      ),
     );
   }
 
