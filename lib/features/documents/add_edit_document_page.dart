@@ -7,6 +7,7 @@ import 'package:file_picker/file_picker.dart';
 import '../../database/study_database.dart';
 import '../../core/services/cloud_storage_service.dart';
 import '../../core/services/auth_service.dart';
+import '../../core/services/supabase_service.dart';
 
 class AddEditDocumentPage extends StatefulWidget {
   final Document? document;
@@ -188,6 +189,35 @@ class _AddEditDocumentPageState extends State<AddEditDocumentPage> {
         dateTimeModified: now,
       );
       await db.documentsDao.updateDocument(updated.toCompanion(true));
+    }
+
+    // Tự động đồng bộ tài liệu sang Supabase nếu người dùng đã đăng nhập Google
+    try {
+      final currentUser = AuthService().currentUser;
+      if (currentUser != null) {
+        final subMatch = _subjects.where((s) => s.subjectPk == _selectedSubjectFk);
+        final subName = subMatch.isNotEmpty ? subMatch.first.name : null;
+        final typeMatch = _docTypes.where((t) => t.docTypePk == _selectedDocTypeFk);
+        final docTypeName = typeMatch.isNotEmpty ? typeMatch.first.name : null;
+
+        await SupabaseService().saveDocument(
+          documentId: docPk,
+          ownerId: currentUser.uid,
+          title: _titleController.text.trim(),
+          note: _noteController.text.trim().isEmpty ? null : _noteController.text.trim(),
+          subjectCode: _selectedSubjectFk,
+          subjectName: subName,
+          docType: docTypeName,
+          status: _status,
+          dueDate: _dueDate,
+          isPinned: _isPinned,
+          fileUrl: finalUrl,
+          fileName: _pickedFileName,
+          fileSize: _fileBytes?.length ?? 0,
+        );
+      }
+    } catch (e) {
+      debugPrint('Thông báo đồng bộ Supabase: $e');
     }
 
     if (mounted) {

@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import 'supabase_service.dart';
 
 class AuthService {
   static final AuthService _instance = AuthService._internal();
@@ -52,12 +53,13 @@ class AuthService {
     }
 
     try {
+      UserCredential? credential;
       if (kIsWeb) {
         // Trên nền tảng Web: Sử dụng signInWithPopup chính chủ của Firebase
         final GoogleAuthProvider googleProvider = GoogleAuthProvider();
         googleProvider.addScope('email');
         googleProvider.addScope('profile');
-        return await _auth!.signInWithPopup(googleProvider);
+        credential = await _auth!.signInWithPopup(googleProvider);
       } else {
         // Trên Android / iOS: Sử dụng GoogleSignIn package
         _googleSignIn ??= GoogleSignIn(scopes: ['email', 'profile']);
@@ -68,13 +70,20 @@ class AuthService {
         }
 
         final GoogleSignInAuthentication googleAuth = await googleUser.authentication;
-        final OAuthCredential credential = GoogleAuthProvider.credential(
+        final OAuthCredential oauthCred = GoogleAuthProvider.credential(
           accessToken: googleAuth.accessToken,
           idToken: googleAuth.idToken,
         );
 
-        return await _auth!.signInWithCredential(credential);
+        credential = await _auth!.signInWithCredential(oauthCred);
       }
+
+      // Tự động đồng bộ hồ sơ người dùng sang bảng profiles trên Supabase
+      if (credential.user != null) {
+        await SupabaseService().syncUserProfile(credential.user!);
+      }
+
+      return credential;
     } catch (e) {
       debugPrint('Lỗi đăng nhập Google: $e');
       rethrow;

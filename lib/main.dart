@@ -5,6 +5,7 @@ import 'firebase_options.dart';
 import 'database/study_database.dart';
 import 'database/default_data.dart';
 import 'core/services/auth_service.dart';
+import 'core/services/supabase_service.dart';
 import 'navigation/main_navigation_framework.dart';
 
 void main() async {
@@ -18,6 +19,13 @@ void main() async {
     AuthService().initialize();
   } catch (e) {
     debugPrint('Thông báo khởi tạo Firebase: $e');
+  }
+
+  // Khởi tạo Supabase Cloud Database
+  try {
+    await SupabaseService().initialize();
+  } catch (e) {
+    debugPrint('Thông báo khởi tạo Supabase: $e');
   }
 
   // Khởi tạo CSDL SQLite với MultiExecutor đa luồng
