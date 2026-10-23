@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../../core/models/borrow_request.dart';
 import '../../core/models/cloud_document.dart';
 import '../../core/services/auth_service.dart';
 import '../../core/services/cloud_storage_service.dart';
 import '../../core/services/supabase_service.dart';
 import 'cloud_documents_tab.dart';
+import 'location_picker_dialog.dart';
 import 'share_document_sheet.dart';
 
 /// Chi tiết tài liệu trên Supabase — nút thao tác hiển thị theo quyền,
@@ -25,6 +27,14 @@ class _CloudDocumentDetailsPageState extends State<CloudDocumentDetailsPage> {
   bool _loading = true;
   bool _probing = false;
   List<PermissionProbe>? _probeResults;
+  List<BorrowRequest> _borrowRequests = [];
+  Object? _borrowRequestsError;
+  bool _borrowRequestsLoading = true;
+  bool _sendingBorrowRequest = false;
+  int? _respondingToBorrowRequest;
+  List<CloudDocument> _recommendedDocuments = [];
+  Object? _recommendationsError;
+  bool _recommendationsLoading = true;
 
   @override
   void initState() {
@@ -42,12 +52,174 @@ class _CloudDocumentDetailsPageState extends State<CloudDocumentDetailsPage> {
         _error = null;
         _loading = false;
       });
+      if (doc == null) return;
+      await _loadBorrowRequests();
+      await _loadRecommendations(doc);
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _error = e;
         _loading = false;
       });
+    }
+  }
+
+  Future<void> _loadRecommendations(CloudDocument document) async {
+    if (!mounted) return;
+    final tags = document.tagList.map((tag) => tag.toLowerCase()).toSet();
+    if (tags.isEmpty) {
+      setState(() {
+        _recommendedDocuments = [];
+        _recommendationsError = null;
+        _recommendationsLoading = false;
+      });
+      return;
+    }
+
+    final currentUser = AuthService().currentUser;
+    if (currentUser == null) return;
+    setState(() {
+      _recommendationsLoading = true;
+      _recommendationsError = null;
+    });
+    try {
+      final documents = await SupabaseService().searchDocuments(
+        ownedByMe: document.ownerId == currentUser.uid,
+      );
+      if (!mounted) return;
+      setState(() {
+        _recommendedDocuments = documents.where((candidate) {
+          return candidate.id != document.id &&
+              candidate.tagList.any((tag) => tags.contains(tag.toLowerCase()));
+        }).toList();
+        _recommendationsLoading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _recommendationsError = e;
+        _recommendationsLoading = false;
+      });
+    }
+  }
+
+  Future<void> _loadBorrowRequests() async {
+    if (AuthService().currentUser == null) return;
+    setState(() {
+      _borrowRequestsLoading = true;
+      _borrowRequestsError = null;
+    });
+    try {
+      final requests = await SupabaseService()
+          .getBorrowRequests(documentId: widget.documentId);
+      if (!mounted) return;
+      setState(() {
+        _borrowRequests = requests;
+        _borrowRequestsLoading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _borrowRequestsError = e;
+        _borrowRequestsLoading = false;
+      });
+    }
+  }
+
+  Future<void> _sendBorrowRequest(CloudDocument document) async {
+    if (_sendingBorrowRequest) return;
+    setState(() => _sendingBorrowRequest = true);
+    final noteController = TextEditingController();
+    try {
+      final note = await showDialog<String>(
+        context: context,
+        builder: (dialogContext) {
+          return AlertDialog(
+            title: const Text('Gửi yêu cầu mượn'),
+            content: TextField(
+              controller: noteController,
+              maxLines: 3,
+              decoration: const InputDecoration(
+                labelText: 'Lời nhắn (không bắt buộc)',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: const Text('Hủy'),
+              ),
+              FilledButton(
+                onPressed: () =>
+                    Navigator.of(dialogContext).pop(noteController.text),
+                child: const Text('Gửi yêu cầu'),
+              ),
+            ],
+          );
+        },
+      );
+      if (note == null || !mounted) return;
+      await SupabaseService().createBorrowRequest(
+        document: document,
+        requestNote: note,
+      );
+      _toast('Đã gửi yêu cầu mượn cho chủ sở hữu', color: Colors.green);
+      await _loadBorrowRequests();
+    } on CloudException catch (e) {
+      _toast(e.message, color: Colors.red.shade700);
+    } catch (e) {
+      _toast('Không gửi được yêu cầu mượn: $e', color: Colors.red.shade700);
+    } finally {
+      noteController.dispose();
+      if (mounted) setState(() => _sendingBorrowRequest = false);
+    }
+  }
+
+  Future<void> _respondToBorrowRequest(
+    BorrowRequest request, {
+    required String status,
+  }) async {
+    if (_respondingToBorrowRequest != null) return;
+    setState(() => _respondingToBorrowRequest = request.id);
+    final decision = status == 'approved' ? 'duyệt' : 'từ chối';
+    try {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: Text('Xác nhận $decision yêu cầu?'),
+          content: Text(
+            'Yêu cầu mượn tài liệu của '
+            '${request.requesterEmail ?? request.requesterName ?? request.requesterId}.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Hủy'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: Text(decision == 'duyệt' ? 'Duyệt' : 'Từ chối'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+      await SupabaseService().respondToBorrowRequest(
+        request: request,
+        status: status,
+      );
+      _toast(
+        status == 'approved' ? 'Đã duyệt yêu cầu mượn' : 'Đã từ chối yêu cầu',
+        color: Colors.green,
+      );
+      await _loadBorrowRequests();
+    } on CloudException catch (e) {
+      _toast(e.message, color: Colors.red.shade700);
+    } catch (e) {
+      _toast('Không cập nhật được yêu cầu mượn: $e',
+          color: Colors.red.shade700);
+    } finally {
+      if (mounted) setState(() => _respondingToBorrowRequest = null);
     }
   }
 
@@ -147,6 +319,16 @@ class _CloudDocumentDetailsPageState extends State<CloudDocumentDetailsPage> {
     final uri = Uri.parse(url);
     if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
       _toast('Không mở được tệp');
+    }
+  }
+
+  Future<void> _openMapLocation(double latitude, double longitude) async {
+    final uri = Uri.https('www.google.com', '/maps/search/', {
+      'api': '1',
+      'query': '$latitude,$longitude',
+    });
+    if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+      _toast('Không mở được vị trí trên bản đồ');
     }
   }
 
@@ -250,8 +432,11 @@ class _CloudDocumentDetailsPageState extends State<CloudDocumentDetailsPage> {
                       label: Text(doc.docType!)),
                 Chip(
                   avatar: StatusIcon(status: doc.status),
-                  label: Text(const ['Cần đọc', 'Đang làm', 'Hoàn thành'][
-                      doc.status.clamp(0, 2)]),
+                  label: Text(const [
+                    'Cần đọc',
+                    'Đang làm',
+                    'Hoàn thành'
+                  ][doc.status.clamp(0, 2)]),
                 ),
                 if (doc.dueDate != null)
                   Chip(
@@ -261,6 +446,61 @@ class _CloudDocumentDetailsPageState extends State<CloudDocumentDetailsPage> {
                   ),
               ],
             ),
+            if (doc.tagList.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              const Text('Tag',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: doc.tagList
+                    .map((tag) => Chip(
+                          avatar: const Icon(Icons.sell_outlined, size: 16),
+                          label: Text(tag),
+                        ))
+                    .toList(),
+              ),
+            ],
+            if ((doc.locationName?.trim().isNotEmpty ?? false) ||
+                doc.latitude != null ||
+                doc.longitude != null) ...[
+              const SizedBox(height: 16),
+              Card(
+                child: Builder(builder: (context) {
+                  final latitude = doc.latitude;
+                  final longitude = doc.longitude;
+                  final hasValidCoordinates = latitude != null &&
+                      longitude != null &&
+                      latitude.isFinite &&
+                      longitude.isFinite &&
+                      latitude >= -90 &&
+                      latitude <= 90 &&
+                      longitude >= -180 &&
+                      longitude <= 180;
+
+                  return ListTile(
+                    leading: const Icon(Icons.place_outlined),
+                    title: Text(
+                      doc.locationName?.trim().isNotEmpty == true
+                          ? doc.locationName!.trim()
+                          : 'Vị trí tài liệu',
+                    ),
+                    subtitle: latitude != null || longitude != null
+                        ? Text(
+                            'Tọa độ: ${latitude?.toString() ?? '—'}, ${longitude?.toString() ?? '—'}',
+                          )
+                        : null,
+                    trailing: hasValidCoordinates
+                        ? const Icon(Icons.map_outlined)
+                        : null,
+                    onTap: hasValidCoordinates
+                        ? () => _openMapLocation(latitude, longitude)
+                        : null,
+                  );
+                }),
+              ),
+            ],
             const SizedBox(height: 16),
             if (doc.filePath != null)
               Card(
@@ -320,6 +560,10 @@ class _CloudDocumentDetailsPageState extends State<CloudDocumentDetailsPage> {
               ),
             ],
             const SizedBox(height: 16),
+            _buildBorrowRequests(doc),
+            const SizedBox(height: 16),
+            _buildRecommendations(doc),
+            const SizedBox(height: 16),
             if (doc.updatedAt != null)
               Text(
                 'Cập nhật lần cuối: ${_formatDate(doc.updatedAt!)}'
@@ -350,6 +594,297 @@ class _CloudDocumentDetailsPageState extends State<CloudDocumentDetailsPage> {
       ),
     );
   }
+
+  Widget _buildRecommendations(CloudDocument document) {
+    final hasTags = document.tagList.isNotEmpty;
+    final related = _recommendedDocuments;
+    return Card(
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: Colors.deepPurple.shade100),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Gợi ý theo tag',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                ),
+                if (hasTags)
+                  IconButton(
+                    tooltip: 'Tải lại gợi ý',
+                    onPressed: _recommendationsLoading
+                        ? null
+                        : () => _loadRecommendations(document),
+                    icon: const Icon(Icons.refresh),
+                  ),
+              ],
+            ),
+            if (!hasTags)
+              Text(
+                'Tài liệu chưa có tag để tìm gợi ý.',
+                style: TextStyle(color: Colors.grey.shade700),
+              )
+            else if (_recommendationsLoading)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 8),
+                child: Center(child: CircularProgressIndicator()),
+              )
+            else if (_recommendationsError != null) ...[
+              Text(
+                'Không tải được gợi ý: $_recommendationsError',
+                style: TextStyle(color: Colors.red.shade700),
+              ),
+              TextButton.icon(
+                onPressed: () => _loadRecommendations(document),
+                icon: const Icon(Icons.refresh),
+                label: const Text('Thử lại'),
+              ),
+            ] else if (related.isEmpty)
+              Text(
+                'Chưa tìm thấy tài liệu khác có tag trùng trong Cloud.',
+                style: TextStyle(color: Colors.grey.shade700),
+              )
+            else
+              ...related.map(
+                (candidate) => ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.auto_awesome_outlined),
+                  title: Text(candidate.title),
+                  subtitle: Text(candidate.tagList.join(', ')),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) =>
+                          CloudDocumentDetailsPage(documentId: candidate.id),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBorrowRequests(CloudDocument doc) {
+    final user = AuthService().currentUser;
+    if (user == null) return const SizedBox.shrink();
+
+    final isOwner = doc.ownerId == user.uid;
+    final requests = _borrowRequests.where((request) {
+      return isOwner
+          ? request.ownerId == user.uid && request.requesterId != user.uid
+          : request.requesterId == user.uid;
+    }).toList();
+    final hasActiveRequest = requests.any(
+      (request) => request.status == 'pending' || request.status == 'approved',
+    );
+
+    return Card(
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: Colors.teal.shade200),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.handshake_outlined, color: Colors.teal),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    isOwner ? 'Yêu cầu mượn tài liệu' : 'Yêu cầu mượn của bạn',
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Tải lại yêu cầu',
+                  onPressed:
+                      _borrowRequestsLoading ? null : _loadBorrowRequests,
+                  icon: const Icon(Icons.refresh),
+                ),
+              ],
+            ),
+            if (!isOwner) ...[
+              const SizedBox(height: 4),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: _sendingBorrowRequest ||
+                          hasActiveRequest ||
+                          _borrowRequestsLoading
+                      ? null
+                      : () => _sendBorrowRequest(doc),
+                  icon: _sendingBorrowRequest
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.send),
+                  label: Text(
+                    hasActiveRequest
+                        ? 'Đang có yêu cầu chờ duyệt/đã duyệt'
+                        : 'Gửi yêu cầu mượn',
+                  ),
+                ),
+              ),
+            ],
+            if (_borrowRequestsLoading)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 16),
+                child: Center(child: CircularProgressIndicator()),
+              )
+            else if (_borrowRequestsError != null) ...[
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Text(
+                  'Không tải được yêu cầu mượn: $_borrowRequestsError',
+                  style: TextStyle(color: Colors.red.shade700),
+                ),
+              ),
+              TextButton.icon(
+                onPressed: _loadBorrowRequests,
+                icon: const Icon(Icons.refresh),
+                label: const Text('Thử lại'),
+              ),
+            ] else if (requests.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Text(
+                  isOwner
+                      ? 'Chưa có yêu cầu mượn.'
+                      : 'Bạn chưa gửi yêu cầu mượn tài liệu này.',
+                  style: TextStyle(color: Colors.grey.shade700),
+                ),
+              )
+            else
+              ...requests.map(_buildBorrowRequestTile),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBorrowRequestTile(BorrowRequest request) {
+    final isPending = request.status == 'pending';
+    final isResponding = _respondingToBorrowRequest == request.id;
+    final statusColor = switch (request.status) {
+      'approved' => Colors.green,
+      'rejected' => Colors.red,
+      'returned' => Colors.blueGrey,
+      _ => Colors.orange,
+    };
+
+    return Container(
+      margin: const EdgeInsets.only(top: 10),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade50,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.grey.shade300),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  request.requesterName ??
+                      request.requesterEmail ??
+                      'Người gửi: ${request.requesterId}',
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+              ),
+              Chip(
+                label: Text(request.statusLabel),
+                labelStyle: TextStyle(color: statusColor, fontSize: 12),
+                visualDensity: VisualDensity.compact,
+                side: BorderSide(color: statusColor.withOpacity(0.45)),
+                backgroundColor: statusColor.withOpacity(0.08),
+              ),
+            ],
+          ),
+          if (request.requestNote?.isNotEmpty == true) ...[
+            const SizedBox(height: 4),
+            Text('Lời nhắn: ${request.requestNote}'),
+          ],
+          if (request.responseNote?.isNotEmpty == true) ...[
+            const SizedBox(height: 4),
+            Text('Phản hồi: ${request.responseNote}'),
+          ],
+          if (request.borrowDate != null || request.returnDueDate != null) ...[
+            const SizedBox(height: 4),
+            Text(
+              [
+                if (request.borrowDate != null)
+                  'Ngày mượn: ${_formatBorrowDate(request.borrowDate!)}',
+                if (request.returnDueDate != null)
+                  'Hạn trả: ${_formatBorrowDate(request.returnDueDate!)}',
+              ].join(' • '),
+              style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+            ),
+          ],
+          if (isPending &&
+              AuthService().currentUser?.uid == request.ownerId) ...[
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                OutlinedButton.icon(
+                  onPressed: isResponding
+                      ? null
+                      : () => _respondToBorrowRequest(
+                            request,
+                            status: 'rejected',
+                          ),
+                  icon: const Icon(Icons.close),
+                  label: const Text('Từ chối'),
+                ),
+                FilledButton.icon(
+                  onPressed: isResponding
+                      ? null
+                      : () => _respondToBorrowRequest(
+                            request,
+                            status: 'approved',
+                          ),
+                  icon: isResponding
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.check),
+                  label: const Text('Duyệt'),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  String _formatBorrowDate(DateTime date) =>
+      '${date.day.toString().padLeft(2, '0')}/'
+      '${date.month.toString().padLeft(2, '0')}/${date.year}';
 
   Widget _buildRoleBanner(CloudDocument doc, DocumentRole role) {
     final caps = <String>[
@@ -413,7 +948,8 @@ class _CloudDocumentDetailsPageState extends State<CloudDocumentDetailsPage> {
         subtitle: Text(doc.permissions.isEmpty
             ? 'Chưa chia sẻ với ai'
             : doc.permissions
-                .map((p) => '${p['shared_with_email']} (${p['permission_level']})')
+                .map((p) =>
+                    '${p['shared_with_email']} (${p['permission_level']})')
                 .join(', ')),
         trailing: const Icon(Icons.arrow_forward_ios_rounded, size: 16),
         onTap: () async {
@@ -478,7 +1014,8 @@ class _CloudDocumentDetailsPageState extends State<CloudDocumentDetailsPage> {
                   ),
                   title: Text(r.action),
                   subtitle: Text(
-                    r.detail ?? (r.allowed ? 'Server cho phép' : 'Server chặn (RLS)'),
+                    r.detail ??
+                        (r.allowed ? 'Server cho phép' : 'Server chặn (RLS)'),
                     style: const TextStyle(fontSize: 12),
                   ),
                 ),
@@ -505,9 +1042,27 @@ class _EditCloudDocumentSheetState extends State<_EditCloudDocumentSheet> {
   late final TextEditingController _title;
   late final TextEditingController _note;
   late final TextEditingController _subjectCode;
+  late final TextEditingController _tags;
+  late final TextEditingController _locationName;
+  late final TextEditingController _latitude;
+  late final TextEditingController _longitude;
   late int _status;
   late bool _pinned;
   DateTime? _dueDate;
+
+  Future<void> _pickLocationPoint() async {
+    final point = await LocationPickerDialog.show(
+      context,
+      initialLatitude: double.tryParse(_latitude.text.trim()),
+      initialLongitude: double.tryParse(_longitude.text.trim()),
+    );
+    if (point != null && mounted) {
+      setState(() {
+        _latitude.text = point.latitude.toStringAsFixed(6);
+        _longitude.text = point.longitude.toStringAsFixed(6);
+      });
+    }
+  }
 
   @override
   void initState() {
@@ -515,6 +1070,12 @@ class _EditCloudDocumentSheetState extends State<_EditCloudDocumentSheet> {
     _title = TextEditingController(text: widget.doc.title);
     _note = TextEditingController(text: widget.doc.note ?? '');
     _subjectCode = TextEditingController(text: widget.doc.subjectCode ?? '');
+    _tags = TextEditingController(text: widget.doc.tags ?? '');
+    _locationName = TextEditingController(text: widget.doc.locationName ?? '');
+    _latitude =
+        TextEditingController(text: widget.doc.latitude?.toString() ?? '');
+    _longitude =
+        TextEditingController(text: widget.doc.longitude?.toString() ?? '');
     _status = widget.doc.status;
     _pinned = widget.doc.isPinned;
     _dueDate = widget.doc.dueDate;
@@ -525,6 +1086,10 @@ class _EditCloudDocumentSheetState extends State<_EditCloudDocumentSheet> {
     _title.dispose();
     _note.dispose();
     _subjectCode.dispose();
+    _tags.dispose();
+    _locationName.dispose();
+    _latitude.dispose();
+    _longitude.dispose();
     super.dispose();
   }
 
@@ -605,6 +1170,63 @@ class _EditCloudDocumentSheetState extends State<_EditCloudDocumentSheet> {
                   alignLabelWithHint: true,
                   border: OutlineInputBorder()),
             ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _tags,
+              decoration: const InputDecoration(
+                labelText: 'Tag',
+                helperText: 'Phân tách nhiều tag bằng dấu phẩy',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _locationName,
+              decoration: const InputDecoration(
+                  labelText: 'Tên vị trí', border: OutlineInputBorder()),
+            ),
+            const SizedBox(height: 12),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final fieldWidth = constraints.maxWidth < 420
+                    ? constraints.maxWidth
+                    : (constraints.maxWidth - 12) / 2;
+                return Wrap(
+                  spacing: 12,
+                  runSpacing: 12,
+                  children: [
+                    SizedBox(
+                      width: fieldWidth,
+                      child: TextField(
+                        controller: _latitude,
+                        keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true, signed: true),
+                        decoration: const InputDecoration(
+                            labelText: 'Vĩ độ', border: OutlineInputBorder()),
+                      ),
+                    ),
+                    SizedBox(
+                      width: fieldWidth,
+                      child: TextField(
+                        controller: _longitude,
+                        keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true, signed: true),
+                        decoration: const InputDecoration(
+                            labelText: 'Kinh độ', border: OutlineInputBorder()),
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: _pickLocationPoint,
+                icon: const Icon(Icons.map_outlined),
+                label: const Text('Chọn điểm trên bản đồ'),
+              ),
+            ),
             const SizedBox(height: 16),
             ElevatedButton.icon(
               style: ElevatedButton.styleFrom(
@@ -613,6 +1235,33 @@ class _EditCloudDocumentSheetState extends State<_EditCloudDocumentSheet> {
               onPressed: () {
                 final title = _title.text.trim();
                 if (title.isEmpty) return;
+                final latitudeText = _latitude.text.trim();
+                final longitudeText = _longitude.text.trim();
+                final latitude =
+                    latitudeText.isEmpty ? null : double.tryParse(latitudeText);
+                final longitude = longitudeText.isEmpty
+                    ? null
+                    : double.tryParse(longitudeText);
+                if ((latitudeText.isNotEmpty &&
+                        (latitude == null ||
+                            !latitude.isFinite ||
+                            latitude < -90 ||
+                            latitude > 90)) ||
+                    (longitudeText.isNotEmpty &&
+                        (longitude == null ||
+                            !longitude.isFinite ||
+                            longitude < -180 ||
+                            longitude > 180))) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Vĩ độ/kinh độ không hợp lệ')),
+                  );
+                  return;
+                }
+                final parsedTags = _tags.text
+                    .split(',')
+                    .map((tag) => tag.trim())
+                    .where((tag) => tag.isNotEmpty)
+                    .toList();
                 Navigator.pop(context, {
                   'title': title,
                   'note': _note.text.trim().isEmpty ? null : _note.text.trim(),
@@ -622,6 +1271,12 @@ class _EditCloudDocumentSheetState extends State<_EditCloudDocumentSheet> {
                   'status': _status,
                   'is_pinned': _pinned,
                   'due_date': _dueDate?.toUtc().toIso8601String(),
+                  'tags': parsedTags.isEmpty ? null : parsedTags.join(', '),
+                  'location_name': _locationName.text.trim().isEmpty
+                      ? null
+                      : _locationName.text.trim(),
+                  'latitude': latitude,
+                  'longitude': longitude,
                 });
               },
               icon: const Icon(Icons.save_rounded),

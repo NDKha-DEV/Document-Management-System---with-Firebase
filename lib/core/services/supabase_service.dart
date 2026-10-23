@@ -280,6 +280,10 @@ class SupabaseService {
     DateTime? dueDate,
     bool? isPinned,
     String? fileUrl,
+    String? tags,
+    String? locationName,
+    double? latitude,
+    double? longitude,
     String? filePath,
     String? fileName,
     int? fileSize,
@@ -300,6 +304,10 @@ class SupabaseService {
       'due_date': dueDate?.toUtc().toIso8601String(),
       'is_pinned': isPinned ?? false,
       'file_url': fileUrl,
+      'tags': tags,
+      'location_name': locationName,
+      'latitude': latitude,
+      'longitude': longitude,
     };
     if (filePath != null) {
       data['file_path'] = filePath;
@@ -346,8 +354,8 @@ class SupabaseService {
   Future<void> patchOwnDocumentSilently(
       String documentId, Map<String, dynamic> fields) async {
     final c = _client;
-    final signedIn =
-        Firebase.apps.isNotEmpty && fb.FirebaseAuth.instance.currentUser != null;
+    final signedIn = Firebase.apps.isNotEmpty &&
+        fb.FirebaseAuth.instance.currentUser != null;
     if (c == null || !signedIn) return;
     try {
       await c.from('documents').update(fields).eq('id', documentId);
@@ -452,6 +460,111 @@ class SupabaseService {
     }
   }
 
+  /// Creates a pending borrow request for the loaded Cloud document.
+  Future<BorrowRequest> createBorrowRequest({
+    required CloudDocument document,
+    String? requestNote,
+  }) async {
+    final c = _requireClient();
+    final user = _requireUser();
+    if (document.ownerId == user.uid) {
+      throw CloudException('Bạn không thể gửi yêu cầu mượn tài liệu của mình.');
+    }
+
+    try {
+      final existing = await c
+          .from('borrow_requests')
+          .select('id')
+          .eq('document_id', document.id)
+          .eq('requester_id', user.uid)
+          .eq('status', 'pending')
+          .maybeSingle();
+      if (existing != null) {
+        throw CloudException('Bạn đã có yêu cầu mượn đang chờ duyệt.');
+      }
+
+      final row = await c
+          .from('borrow_requests')
+          .insert({
+            'document_id': document.id,
+            'requester_id': user.uid,
+            'owner_id': document.ownerId,
+            'status': 'pending',
+            'request_note': requestNote == null || requestNote.trim().isEmpty
+                ? null
+                : requestNote.trim(),
+          })
+          .select()
+          .single();
+      return BorrowRequest.fromMap(Map<String, dynamic>.from(row));
+    } catch (e) {
+      throw _translate(e);
+    }
+  }
+
+  /// Lists requests visible to the current Firebase user under Supabase RLS.
+  Future<List<BorrowRequest>> getBorrowRequests({String? documentId}) async {
+    final c = _requireClient();
+    final user = _requireUser();
+    try {
+      var query = c
+          .from('borrow_requests')
+          .select('*')
+          .or('requester_id.eq.${user.uid},owner_id.eq.${user.uid}');
+      if (documentId != null) {
+        query = query.eq('document_id', documentId);
+      }
+      final rows = await query.order('created_at', ascending: false);
+      return rows
+          .map<BorrowRequest>(
+              (row) => BorrowRequest.fromMap(Map<String, dynamic>.from(row)))
+          .toList();
+    } catch (e) {
+      throw _translate(e);
+    }
+  }
+
+  /// Owner-side decision. The client guard complements, but does not replace,
+  /// the current RLS policies.
+  Future<BorrowRequest> respondToBorrowRequest({
+    required BorrowRequest request,
+    required String status,
+    String? responseNote,
+  }) async {
+    final c = _requireClient();
+    final user = _requireUser();
+    if (request.ownerId != user.uid) {
+      throw CloudException('Chỉ chủ sở hữu mới có thể xử lý yêu cầu mượn.');
+    }
+    if (request.status != 'pending' ||
+        (status != 'approved' && status != 'rejected')) {
+      throw CloudException('Trạng thái yêu cầu mượn không hợp lệ.');
+    }
+
+    try {
+      final row = await c
+          .from('borrow_requests')
+          .update({
+            'status': status,
+            'response_note': responseNote == null || responseNote.trim().isEmpty
+                ? null
+                : responseNote.trim(),
+            'updated_at': DateTime.now().toUtc().toIso8601String(),
+          })
+          .eq('id', request.id)
+          .eq('status', 'pending')
+          .select()
+          .maybeSingle();
+      if (row == null) {
+        throw CloudException(
+            'Yêu cầu không còn chờ duyệt hoặc bạn không có quyền xử lý.');
+      }
+      return BorrowRequest.fromMap(Map<String, dynamic>.from(row));
+    } catch (e) {
+      throw _translate(e);
+    }
+  }
+
   /// 7. Xóa Tài liệu trên Supabase (CASCADE xóa sạch quyền trong document_permissions)
   /// Trả về true nếu có dòng bị xóa (RLS chỉ cho owner xóa).
   Future<bool> deleteDocument(String documentId) async {
@@ -459,11 +572,8 @@ class SupabaseService {
     if (c == null) return false;
 
     try {
-      final rows = await c
-          .from('documents')
-          .delete()
-          .eq('id', documentId)
-          .select('id');
+      final rows =
+          await c.from('documents').delete().eq('id', documentId).select('id');
       return rows.isNotEmpty;
     } catch (e) {
       debugPrint('Lỗi xóa tài liệu trên Supabase: $e');
@@ -480,11 +590,8 @@ class SupabaseService {
 
     // XEM
     try {
-      final row = await c
-          .from('documents')
-          .select('id')
-          .eq('id', doc.id)
-          .maybeSingle();
+      final row =
+          await c.from('documents').select('id').eq('id', doc.id).maybeSingle();
       results.add(PermissionProbe('Xem tài liệu (SELECT)', row != null));
     } catch (e) {
       results.add(PermissionProbe('Xem tài liệu (SELECT)', false,
@@ -523,7 +630,8 @@ class SupabaseService {
         'permission_level': 'viewer',
         'granted_by': user.uid,
       }).select('id');
-      results.add(PermissionProbe('Chia sẻ tiếp (INSERT quyền)', rows.isNotEmpty));
+      results
+          .add(PermissionProbe('Chia sẻ tiếp (INSERT quyền)', rows.isNotEmpty));
       if (rows.isNotEmpty) {
         await c
             .from('document_permissions')
@@ -539,14 +647,12 @@ class SupabaseService {
     // XÓA: chỉ thử thật khi KHÔNG phải chủ sở hữu (tránh xóa mất tài liệu của chính mình)
     if (doc.ownerId == user.uid) {
       results.add(PermissionProbe('Xóa tài liệu (DELETE)', true,
-          detail: 'Chủ sở hữu luôn được xóa (không chạy thử để tránh mất dữ liệu)'));
+          detail:
+              'Chủ sở hữu luôn được xóa (không chạy thử để tránh mất dữ liệu)'));
     } else {
       try {
-        final rows = await c
-            .from('documents')
-            .delete()
-            .eq('id', doc.id)
-            .select('id');
+        final rows =
+            await c.from('documents').delete().eq('id', doc.id).select('id');
         results.add(PermissionProbe('Xóa tài liệu (DELETE)', rows.isNotEmpty));
       } catch (e) {
         results.add(PermissionProbe('Xóa tài liệu (DELETE)', false,

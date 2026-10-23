@@ -24,9 +24,18 @@ class CloudDocumentsTab extends StatefulWidget {
 
 class _CloudDocumentsTabState extends State<CloudDocumentsTab>
     with AutomaticKeepAliveClientMixin {
+  static const _localDocumentTypes = [
+    'Slide bài giảng',
+    'Bài tập & Đồ án',
+    'Đề thi & Ôn tập',
+    'Tài liệu tham khảo',
+  ];
+
   Future<List<CloudDocument>>? _future;
   String? _loadedForUid;
   String _loadedQuery = '';
+  String? _selectedSubjectCode;
+  String? _selectedDocType;
 
   @override
   bool get wantKeepAlive => true;
@@ -108,21 +117,52 @@ class _CloudDocumentsTabState extends State<CloudDocumentsTab>
                   ),
                 );
               }
-              final docs = snapshot.data ?? [];
+              final allDocs = snapshot.data ?? [];
+              final docs = widget.ownedByMe
+                  ? allDocs.where((doc) {
+                      final matchesSubject = _selectedSubjectCode == null ||
+                          doc.subjectCode?.trim() == _selectedSubjectCode;
+                      final matchesDocType = _selectedDocType == null ||
+                          doc.docType?.trim() == _selectedDocType;
+                      return matchesSubject && matchesDocType;
+                    }).toList()
+                  : allDocs;
               if (docs.isEmpty) {
+                final hasActiveFilters = widget.ownedByMe &&
+                    (_selectedSubjectCode != null || _selectedDocType != null);
+                if (widget.ownedByMe) {
+                  return ListView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 96),
+                    children: [
+                      _buildHeader(user, 0),
+                      _buildFilterBar(allDocs),
+                      _buildEmptyNotice(
+                        hasActiveFilters
+                            ? 'Không có tài liệu Cloud phù hợp với bộ lọc. Thử chọn Tất cả môn hoặc Mọi loại.'
+                            : widget.searchQuery.isNotEmpty
+                                ? 'Không tìm thấy tài liệu khớp "${widget.searchQuery}"'
+                                : 'Bạn chưa có tài liệu nào trên Cloud.',
+                      ),
+                      if (!hasActiveFilters && widget.searchQuery.isEmpty)
+                        Center(
+                          child: OutlinedButton.icon(
+                            onPressed: _reload,
+                            icon: const Icon(Icons.refresh),
+                            label: const Text('Làm mới'),
+                          ),
+                        ),
+                    ],
+                  );
+                }
                 return _buildMessage(
-                  icon: widget.ownedByMe
-                      ? Icons.cloud_queue_rounded
-                      : Icons.share_outlined,
+                  icon: Icons.share_outlined,
                   color: Colors.grey.shade400,
                   title: widget.searchQuery.isNotEmpty
                       ? 'Không tìm thấy tài liệu khớp "${widget.searchQuery}"'
-                      : widget.ownedByMe
-                          ? 'Bạn chưa có tài liệu nào trên Cloud'
-                          : 'Chưa có tài liệu nào được chia sẻ với bạn',
-                  body: widget.ownedByMe
-                      ? 'Bấm "Thêm Tài Liệu" khi đang đăng nhập để lưu lên Supabase (Database + Storage).'
-                      : 'Khi người khác chia sẻ tài liệu tới ${user.email}, tài liệu sẽ xuất hiện tại đây.',
+                      : 'Chưa có tài liệu nào được chia sẻ với bạn',
+                  body:
+                      'Khi người khác chia sẻ tài liệu tới ${user.email}, tài liệu sẽ xuất hiện tại đây.',
                   action: OutlinedButton.icon(
                     onPressed: _reload,
                     icon: const Icon(Icons.refresh),
@@ -133,11 +173,15 @@ class _CloudDocumentsTabState extends State<CloudDocumentsTab>
               return ListView.separated(
                 physics: const AlwaysScrollableScrollPhysics(),
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 96),
-                itemCount: docs.length + 1,
+                itemCount: docs.length + (widget.ownedByMe ? 2 : 1),
                 separatorBuilder: (_, __) => const SizedBox(height: 10),
                 itemBuilder: (context, index) {
                   if (index == 0) return _buildHeader(user, docs.length);
-                  final doc = docs[index - 1];
+                  if (widget.ownedByMe && index == 1) {
+                    return _buildFilterBar(allDocs);
+                  }
+                  final docIndex = index - (widget.ownedByMe ? 2 : 1);
+                  final doc = docs[docIndex];
                   return _CloudDocumentCard(
                     doc: doc,
                     role: doc.roleFor(uid: user.uid, email: user.email),
@@ -150,6 +194,100 @@ class _CloudDocumentsTabState extends State<CloudDocumentsTab>
           ),
         );
       },
+    );
+  }
+
+  Widget _buildEmptyNotice(String message) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 36),
+      child: Column(
+        children: [
+          Icon(Icons.filter_alt_off_outlined,
+              size: 48, color: Colors.grey.shade400),
+          const SizedBox(height: 12),
+          Text(message, textAlign: TextAlign.center),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFilterBar(List<CloudDocument> docs) {
+    final subjects = docs
+        .map((doc) => doc.subjectCode?.trim())
+        .whereType<String>()
+        .where((code) => code.isNotEmpty)
+        .toSet()
+        .toList()
+      ..sort();
+    final docTypes = {
+      ..._localDocumentTypes,
+      ...docs
+          .map((doc) => doc.docType?.trim())
+          .whereType<String>()
+          .where((type) => type.isNotEmpty),
+    }.toList()
+      ..sort((a, b) {
+        final aIndex = _localDocumentTypes.indexOf(a);
+        final bIndex = _localDocumentTypes.indexOf(b);
+        if (aIndex >= 0 && bIndex >= 0) return aIndex.compareTo(bIndex);
+        if (aIndex >= 0) return -1;
+        if (bIndex >= 0) return 1;
+        return a.compareTo(b);
+      });
+
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Column(
+        children: [
+          _buildFilterRow(
+            allLabel: 'Tất cả môn',
+            selectedValue: _selectedSubjectCode,
+            values: subjects,
+            onSelected: (value) => setState(() => _selectedSubjectCode = value),
+          ),
+          const SizedBox(height: 6),
+          _buildFilterRow(
+            allLabel: 'Mọi loại',
+            selectedValue: _selectedDocType,
+            values: docTypes,
+            onSelected: (value) => setState(() => _selectedDocType = value),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFilterRow({
+    required String allLabel,
+    required String? selectedValue,
+    required List<String> values,
+    required ValueChanged<String?> onSelected,
+  }) {
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      child: Row(
+        children: [
+          ChoiceChip(
+            label: Text(allLabel),
+            selected: selectedValue == null,
+            onSelected: (selected) {
+              if (selected) onSelected(null);
+            },
+          ),
+          const SizedBox(width: 8),
+          ...values.map(
+            (value) => Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: ChoiceChip(
+                label: Text(value),
+                selected: selectedValue == value,
+                onSelected: (selected) => onSelected(selected ? value : null),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 

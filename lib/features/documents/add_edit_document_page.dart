@@ -8,6 +8,7 @@ import '../../database/study_database.dart';
 import '../../core/services/cloud_storage_service.dart';
 import '../../core/services/auth_service.dart';
 import '../../core/services/supabase_service.dart';
+import 'location_picker_dialog.dart';
 
 class AddEditDocumentPage extends StatefulWidget {
   final Document? document;
@@ -28,6 +29,10 @@ class _AddEditDocumentPageState extends State<AddEditDocumentPage> {
   late TextEditingController _titleController;
   late TextEditingController _noteController;
   late TextEditingController _urlController;
+  late TextEditingController _tagsController;
+  late TextEditingController _locationNameController;
+  late TextEditingController _latitudeController;
+  late TextEditingController _longitudeController;
 
   String? _selectedSubjectFk;
   String? _selectedDocTypeFk;
@@ -51,6 +56,13 @@ class _AddEditDocumentPageState extends State<AddEditDocumentPage> {
     _titleController = TextEditingController(text: d?.title ?? '');
     _noteController = TextEditingController(text: d?.note ?? '');
     _urlController = TextEditingController(text: d?.externalUrl ?? '');
+    _tagsController = TextEditingController(text: d?.tags ?? '');
+    _locationNameController =
+        TextEditingController(text: d?.locationName ?? '');
+    _latitudeController =
+        TextEditingController(text: d?.latitude?.toString() ?? '');
+    _longitudeController =
+        TextEditingController(text: d?.longitude?.toString() ?? '');
     _selectedSubjectFk = d?.subjectFk ?? widget.initialSubjectFk;
     _selectedDocTypeFk = d?.docTypeFk;
     _dueDate = d?.dueDate;
@@ -84,6 +96,10 @@ class _AddEditDocumentPageState extends State<AddEditDocumentPage> {
     _titleController.dispose();
     _noteController.dispose();
     _urlController.dispose();
+    _tagsController.dispose();
+    _locationNameController.dispose();
+    _latitudeController.dispose();
+    _longitudeController.dispose();
     super.dispose();
   }
 
@@ -124,6 +140,20 @@ class _AddEditDocumentPageState extends State<AddEditDocumentPage> {
     }
   }
 
+  Future<void> _pickLocationPoint() async {
+    final point = await LocationPickerDialog.show(
+      context,
+      initialLatitude: double.tryParse(_latitudeController.text.trim()),
+      initialLongitude: double.tryParse(_longitudeController.text.trim()),
+    );
+    if (point != null && mounted) {
+      setState(() {
+        _latitudeController.text = point.latitude.toStringAsFixed(6);
+        _longitudeController.text = point.longitude.toStringAsFixed(6);
+      });
+    }
+  }
+
   Future<void> _saveDocument() async {
     if (!_formKey.currentState!.validate()) return;
     if (_selectedSubjectFk == null || _selectedDocTypeFk == null) {
@@ -143,6 +173,17 @@ class _AddEditDocumentPageState extends State<AddEditDocumentPage> {
 
     final String? finalUrl =
         _urlController.text.trim().isEmpty ? null : _urlController.text.trim();
+    final parsedTags = _tagsController.text
+        .split(',')
+        .map((tag) => tag.trim())
+        .where((tag) => tag.isNotEmpty)
+        .toList();
+    final tags = parsedTags.isEmpty ? null : parsedTags.join(', ');
+    final locationName = _locationNameController.text.trim().isEmpty
+        ? null
+        : _locationNameController.text.trim();
+    final latitude = double.tryParse(_latitudeController.text.trim());
+    final longitude = double.tryParse(_longitudeController.text.trim());
 
     // Tải tệp MỚI CHỌN lên Supabase Storage (chỉ khi đã đăng nhập Google)
     UploadedFile? uploaded;
@@ -185,6 +226,10 @@ class _AddEditDocumentPageState extends State<AddEditDocumentPage> {
         dueDate: drift.Value(_dueDate),
         status: drift.Value(_status),
         isPinned: drift.Value(_isPinned),
+        tags: drift.Value(tags),
+        locationName: drift.Value(locationName),
+        latitude: drift.Value(latitude),
+        longitude: drift.Value(longitude),
         dateTimeCreated: now,
         dateTimeModified: now,
       );
@@ -204,6 +249,10 @@ class _AddEditDocumentPageState extends State<AddEditDocumentPage> {
         dueDate: drift.Value(_dueDate),
         status: _status,
         isPinned: _isPinned,
+        tags: drift.Value(tags),
+        locationName: drift.Value(locationName),
+        latitude: drift.Value(latitude),
+        longitude: drift.Value(longitude),
         dateTimeModified: now,
       );
       await db.documentsDao.updateDocument(updated.toCompanion(true));
@@ -236,6 +285,10 @@ class _AddEditDocumentPageState extends State<AddEditDocumentPage> {
           status: _status,
           dueDate: _dueDate,
           isPinned: _isPinned,
+          tags: tags,
+          locationName: locationName,
+          latitude: latitude,
+          longitude: longitude,
           fileUrl: finalUrl,
           filePath: uploaded?.storagePath,
           fileName: uploaded?.fileName,
@@ -492,6 +545,101 @@ class _AddEditDocumentPageState extends State<AddEditDocumentPage> {
                   const Text('Hiển thị ưu tiên khi mở danh sách tài liệu'),
               value: _isPinned,
               onChanged: (val) => setState(() => _isPinned = val),
+            ),
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: _tagsController,
+              decoration: InputDecoration(
+                labelText: 'Tag',
+                hintText: 'Ví dụ: Giáo trình, Lý thuyết, Chương 1',
+                helperText: 'Phân tách nhiều tag bằng dấu phẩy',
+                prefixIcon: const Icon(Icons.sell_outlined),
+                border:
+                    OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: _locationNameController,
+              decoration: InputDecoration(
+                labelText: 'Tên vị trí',
+                hintText: 'Ví dụ: Kệ 3, Ngăn B, Thư viện',
+                prefixIcon: const Icon(Icons.place_outlined),
+                border:
+                    OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+            ),
+            const SizedBox(height: 12),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final fieldWidth = constraints.maxWidth < 420
+                    ? constraints.maxWidth
+                    : (constraints.maxWidth - 12) / 2;
+                return Wrap(
+                  spacing: 12,
+                  runSpacing: 12,
+                  children: [
+                    SizedBox(
+                      width: fieldWidth,
+                      child: TextFormField(
+                        controller: _latitudeController,
+                        keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true, signed: true),
+                        decoration: InputDecoration(
+                          labelText: 'Vĩ độ',
+                          border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12)),
+                        ),
+                        validator: (value) {
+                          final text = value?.trim() ?? '';
+                          if (text.isEmpty) return null;
+                          final coordinate = double.tryParse(text);
+                          if (coordinate == null ||
+                              !coordinate.isFinite ||
+                              coordinate < -90 ||
+                              coordinate > 90) {
+                            return 'Nhập giá trị từ -90 đến 90';
+                          }
+                          return null;
+                        },
+                      ),
+                    ),
+                    SizedBox(
+                      width: fieldWidth,
+                      child: TextFormField(
+                        controller: _longitudeController,
+                        keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true, signed: true),
+                        decoration: InputDecoration(
+                          labelText: 'Kinh độ',
+                          border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12)),
+                        ),
+                        validator: (value) {
+                          final text = value?.trim() ?? '';
+                          if (text.isEmpty) return null;
+                          final coordinate = double.tryParse(text);
+                          if (coordinate == null ||
+                              !coordinate.isFinite ||
+                              coordinate < -180 ||
+                              coordinate > 180) {
+                            return 'Nhập giá trị từ -180 đến 180';
+                          }
+                          return null;
+                        },
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: _pickLocationPoint,
+                icon: const Icon(Icons.map_outlined),
+                label: const Text('Chọn điểm trên bản đồ'),
+              ),
             ),
             const SizedBox(height: 16),
             TextFormField(

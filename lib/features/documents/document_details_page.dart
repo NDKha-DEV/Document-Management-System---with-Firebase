@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../database/study_database.dart';
@@ -30,6 +30,20 @@ class DocumentDetailsPage extends StatelessWidget {
     }
   }
 
+  Future<void> _openMapLocation(
+      BuildContext context, double latitude, double longitude) async {
+    final uri = Uri.https('www.google.com', '/maps/search/', {
+      'api': '1',
+      'query': '$latitude,$longitude',
+    });
+    if (!await launchUrl(uri, mode: LaunchMode.externalApplication) &&
+        context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Không mở được vị trí trên bản đồ')),
+      );
+    }
+  }
+
   void _openShareSheet(BuildContext context, String docId, String docTitle) {
     showShareDocumentSheet(
       context,
@@ -58,7 +72,8 @@ class DocumentDetailsPage extends StatelessWidget {
         if (match.isEmpty) {
           return Scaffold(
             appBar: AppBar(),
-            body: const Center(child: Text('Tài liệu không tồn tại hoặc đã bị xóa')),
+            body: const Center(
+                child: Text('Tài liệu không tồn tại hoặc đã bị xóa')),
           );
         }
 
@@ -67,6 +82,20 @@ class DocumentDetailsPage extends StatelessWidget {
         final sub = item.subject;
         final type = item.docType;
         final subColor = _parseColor(sub?.colorHex);
+        final documentTags = (doc.tags ?? '')
+            .split(',')
+            .map((tag) => tag.trim().toLowerCase())
+            .where((tag) => tag.isNotEmpty)
+            .toSet();
+        final recommendations = snapshot.data!
+            .where((candidate) =>
+                candidate.document.documentPk != doc.documentPk &&
+                documentTags.isNotEmpty &&
+                (candidate.document.tags ?? '')
+                    .split(',')
+                    .map((tag) => tag.trim().toLowerCase())
+                    .any(documentTags.contains))
+            .toList();
 
         return Scaffold(
           appBar: AppBar(
@@ -75,7 +104,8 @@ class DocumentDetailsPage extends StatelessWidget {
               IconButton(
                 tooltip: 'Chia sẻ tài liệu',
                 icon: const Icon(Icons.share_outlined),
-                onPressed: () => _openShareSheet(context, doc.documentPk, doc.title),
+                onPressed: () =>
+                    _openShareSheet(context, doc.documentPk, doc.title),
               ),
               IconButton(
                 tooltip: 'Sửa tài liệu',
@@ -90,7 +120,8 @@ class DocumentDetailsPage extends StatelessWidget {
               ),
               IconButton(
                 tooltip: 'Xóa tài liệu',
-                icon: const Icon(Icons.delete_outline_rounded, color: Colors.redAccent),
+                icon: const Icon(Icons.delete_outline_rounded,
+                    color: Colors.redAccent),
                 onPressed: () async {
                   final confirm = await showDialog<bool>(
                     context: context,
@@ -104,7 +135,8 @@ class DocumentDetailsPage extends StatelessWidget {
                         ),
                         TextButton(
                           onPressed: () => Navigator.pop(ctx, true),
-                          style: TextButton.styleFrom(foregroundColor: Colors.red),
+                          style:
+                              TextButton.styleFrom(foregroundColor: Colors.red),
                           child: const Text('Xóa'),
                         ),
                       ],
@@ -155,7 +187,8 @@ class DocumentDetailsPage extends StatelessWidget {
                   if (doc.isPinned)
                     const Padding(
                       padding: EdgeInsets.only(left: 8),
-                      child: Icon(Icons.push_pin, color: Colors.amber, size: 24),
+                      child:
+                          Icon(Icons.push_pin, color: Colors.amber, size: 24),
                     ),
                 ],
               ),
@@ -183,6 +216,71 @@ class DocumentDetailsPage extends StatelessWidget {
                   _buildStatusChip(doc.status),
                 ],
               ),
+              if (doc.tags != null && doc.tags!.trim().isNotEmpty) ...[
+                const SizedBox(height: 16),
+                const Text(
+                  'Tag',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: doc.tags!
+                      .split(',')
+                      .map((tag) => tag.trim())
+                      .where((tag) => tag.isNotEmpty)
+                      .map((tag) => Chip(
+                            avatar: const Icon(Icons.sell_outlined, size: 16),
+                            label: Text(tag),
+                          ))
+                      .toList(),
+                ),
+              ],
+              const SizedBox(height: 20),
+              _buildRecommendations(
+                context,
+                documentTags.isEmpty ? null : recommendations,
+              ),
+              if ((doc.locationName?.trim().isNotEmpty ?? false) ||
+                  doc.latitude != null ||
+                  doc.longitude != null) ...[
+                const SizedBox(height: 16),
+                Card(
+                  child: Builder(builder: (context) {
+                    final latitude = doc.latitude;
+                    final longitude = doc.longitude;
+                    final hasValidCoordinates = latitude != null &&
+                        longitude != null &&
+                        latitude.isFinite &&
+                        longitude.isFinite &&
+                        latitude >= -90 &&
+                        latitude <= 90 &&
+                        longitude >= -180 &&
+                        longitude <= 180;
+
+                    return ListTile(
+                      leading: const Icon(Icons.place_outlined),
+                      title: Text(
+                        doc.locationName?.trim().isNotEmpty == true
+                            ? doc.locationName!.trim()
+                            : 'Vị trí tài liệu',
+                      ),
+                      subtitle: latitude != null || longitude != null
+                          ? Text(
+                              'Tọa độ: ${latitude?.toString() ?? '—'}, ${longitude?.toString() ?? '—'}',
+                            )
+                          : null,
+                      trailing: hasValidCoordinates
+                          ? const Icon(Icons.map_outlined)
+                          : null,
+                      onTap: hasValidCoordinates
+                          ? () => _openMapLocation(context, latitude, longitude)
+                          : null,
+                    );
+                  }),
+                ),
+              ],
               const SizedBox(height: 20),
 
               // Due Date Card
@@ -193,7 +291,8 @@ class DocumentDetailsPage extends StatelessWidget {
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: ListTile(
-                    leading: const Icon(Icons.event_available, color: Colors.blue),
+                    leading:
+                        const Icon(Icons.event_available, color: Colors.blue),
                     title: Text(
                       'Hạn nộp / Lịch học: ${doc.dueDate!.day}/${doc.dueDate!.month}/${doc.dueDate!.year}',
                       style: const TextStyle(
@@ -207,20 +306,26 @@ class DocumentDetailsPage extends StatelessWidget {
               if (doc.externalUrl != null && doc.externalUrl!.isNotEmpty) ...[
                 Builder(
                   builder: (context) {
-                    final isCloudStorage = doc.externalUrl!.contains('firebasestorage.googleapis.com') ||
+                    final isCloudStorage = doc.externalUrl!
+                            .contains('firebasestorage.googleapis.com') ||
                         doc.externalUrl!.contains('storage.googleapis.com');
 
                     return Card(
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12),
                         side: BorderSide(
-                          color: isCloudStorage ? Colors.deepPurple.shade200 : Colors.blue.shade200,
+                          color: isCloudStorage
+                              ? Colors.deepPurple.shade200
+                              : Colors.blue.shade200,
                         ),
                       ),
                       child: ListTile(
                         leading: Icon(
-                          isCloudStorage ? Icons.cloud_download_rounded : Icons.link,
-                          color: isCloudStorage ? Colors.deepPurple : Colors.blue,
+                          isCloudStorage
+                              ? Icons.cloud_download_rounded
+                              : Icons.link,
+                          color:
+                              isCloudStorage ? Colors.deepPurple : Colors.blue,
                         ),
                         title: Text(
                           isCloudStorage
@@ -229,7 +334,9 @@ class DocumentDetailsPage extends StatelessWidget {
                           style: const TextStyle(fontWeight: FontWeight.w600),
                         ),
                         subtitle: Text(
-                          isCloudStorage ? 'Bấm để mở hoặc tải tệp về máy' : doc.externalUrl!,
+                          isCloudStorage
+                              ? 'Bấm để mở hoặc tải tệp về máy'
+                              : doc.externalUrl!,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
@@ -243,7 +350,8 @@ class DocumentDetailsPage extends StatelessWidget {
               ],
 
               // Local File Path Box
-              if (doc.localFilePath != null && doc.localFilePath!.isNotEmpty) ...[
+              if (doc.localFilePath != null &&
+                  doc.localFilePath!.isNotEmpty) ...[
                 Card(
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
@@ -301,9 +409,12 @@ class DocumentDetailsPage extends StatelessWidget {
                     'Chia Sẻ Tài Liệu Qua Cloud',
                     style: TextStyle(fontWeight: FontWeight.bold),
                   ),
-                  subtitle: const Text('Phân quyền người xem (Viewer, Editor, Admin)'),
-                  trailing: const Icon(Icons.arrow_forward_ios_rounded, size: 16),
-                  onTap: () => _openShareSheet(context, doc.documentPk, doc.title),
+                  subtitle: const Text(
+                      'Phân quyền người xem (Viewer, Editor, Admin)'),
+                  trailing:
+                      const Icon(Icons.arrow_forward_ios_rounded, size: 16),
+                  onTap: () =>
+                      _openShareSheet(context, doc.documentPk, doc.title),
                 ),
               ),
 
@@ -317,7 +428,8 @@ class DocumentDetailsPage extends StatelessWidget {
                       borderRadius: BorderRadius.circular(12)),
                 ),
                 onPressed: () async {
-                  await db.documentsDao.toggleStatus(doc.documentPk, doc.status);
+                  await db.documentsDao
+                      .toggleStatus(doc.documentPk, doc.status);
                   SupabaseService().patchOwnDocumentSilently(
                       doc.documentPk, {'status': (doc.status + 1) % 3});
                 },
@@ -337,6 +449,63 @@ class DocumentDetailsPage extends StatelessWidget {
     );
   }
 
+  Widget _buildRecommendations(
+    BuildContext context,
+    List<DocumentWithDetails>? recommendations,
+  ) {
+    return Card(
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: Colors.deepPurple.shade100),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Gợi ý theo tag',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            if (recommendations == null)
+              Text(
+                'Tài liệu chưa có tag để tìm gợi ý.',
+                style: TextStyle(color: Colors.grey.shade700),
+              )
+            else if (recommendations.isEmpty)
+              Text(
+                'Chưa tìm thấy tài liệu khác có tag trùng.',
+                style: TextStyle(color: Colors.grey.shade700),
+              )
+            else
+              ...recommendations.map((candidate) => ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.auto_awesome_outlined),
+                    title: Text(candidate.document.title),
+                    subtitle: Text(
+                      (candidate.document.tags ?? '')
+                          .split(',')
+                          .map((tag) => tag.trim())
+                          .where((tag) => tag.isNotEmpty)
+                          .join(', '),
+                    ),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => DocumentDetailsPage(
+                          documentPk: candidate.document.documentPk,
+                        ),
+                      ),
+                    ),
+                  )),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildStatusChip(int status) {
     switch (status) {
       case 2:
@@ -344,14 +513,16 @@ class DocumentDetailsPage extends StatelessWidget {
           backgroundColor: Color(0xFFD1FAE5),
           avatar: Icon(Icons.check_circle, color: Colors.green, size: 16),
           label: Text('Đã hoàn thành',
-              style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
+              style:
+                  TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
         );
       case 1:
         return const Chip(
           backgroundColor: Color(0xFFFEF3C7),
           avatar: Icon(Icons.timelapse, color: Colors.amber, size: 16),
           label: Text('Đang làm',
-              style: TextStyle(color: Colors.amber, fontWeight: FontWeight.bold)),
+              style:
+                  TextStyle(color: Colors.amber, fontWeight: FontWeight.bold)),
         );
       case 0:
       default:
