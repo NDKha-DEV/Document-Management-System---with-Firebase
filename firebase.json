@@ -1,1 +1,29 @@
-{"hosting":{"public":"build/web","predeploy":"flutter build web --release --web-renderer canvaskit --no-tree-shake-icons","site":"budget-track","ignore":["firebase.json","**/.*","**/node_modules/**"],"rewrites":[{"source":"**","destination":"/index.html"}]},"flutter":{"platforms":{"android":{"default":{"projectId":"study-materials-app-8fcf8","appId":"1:1047174117640:android:67f15b45c22e6526e1d4bd","fileOutput":"android/app/google-services.json"}},"dart":{"lib/firebase_options.dart":{"projectId":"study-materials-app-8fcf8","configurations":{"android":"1:1047174117640:android:67f15b45c22e6526e1d4bd","ios":"1:1047174117640:ios:107b762c51e27e73e1d4bd","web":"1:1047174117640:web:99ff5f6f88a138dbe1d4bd","windows":"1:1047174117640:web:24ce7587a442af1ae1d4bd"}}}}}}
+{
+  "hosting": {
+    "public": "build/web",
+    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+    "rewrites": [{ "source": "**", "destination": "/index.html" }]
+  },
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "study-materials-app-8fcf8",
+          "appId": "1:1047174117640:android:67f15b45c22e6526e1d4bd",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "study-materials-app-8fcf8",
+          "configurations": {
+            "android": "1:1047174117640:android:67f15b45c22e6526e1d4bd",
+            "ios": "1:1047174117640:ios:107b762c51e27e73e1d4bd",
+            "web": "1:1047174117640:web:99ff5f6f88a138dbe1d4bd",
+            "windows": "1:1047174117640:web:24ce7587a442af1ae1d4bd"
+          }
+        }
+      }
+    }
+  }
+}

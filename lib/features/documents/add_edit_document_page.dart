@@ -90,7 +90,16 @@ class _AddEditDocumentPageState extends State<AddEditDocumentPage> {
   Future<void> _pickFile() async {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
-      allowedExtensions: ['pdf', 'doc', 'docx', 'ppt', 'pptx', 'zip', 'png', 'jpg'],
+      allowedExtensions: [
+        'pdf',
+        'doc',
+        'docx',
+        'ppt',
+        'pptx',
+        'zip',
+        'png',
+        'jpg'
+      ],
       withData: true,
     );
     if (result != null && result.files.isNotEmpty) {
@@ -119,7 +128,8 @@ class _AddEditDocumentPageState extends State<AddEditDocumentPage> {
     if (!_formKey.currentState!.validate()) return;
     if (_selectedSubjectFk == null || _selectedDocTypeFk == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Vui lòng chọn Môn học và Phân loại tài liệu')),
+        const SnackBar(
+            content: Text('Vui lòng chọn Môn học và Phân loại tài liệu')),
       );
       return;
     }
@@ -128,32 +138,35 @@ class _AddEditDocumentPageState extends State<AddEditDocumentPage> {
 
     final db = Provider.of<StudyDatabase>(context, listen: false);
     final now = DateTime.now();
-    final docPk = widget.document?.documentPk ?? 'doc-${now.millisecondsSinceEpoch}';
+    final docPk =
+        widget.document?.documentPk ?? 'doc-${now.millisecondsSinceEpoch}';
 
-    String? finalUrl = _urlController.text.trim().isEmpty ? null : _urlController.text.trim();
+    final String? finalUrl =
+        _urlController.text.trim().isEmpty ? null : _urlController.text.trim();
 
-    // Tải tệp lên Firebase Cloud Storage nếu được chọn
-    if (_uploadToCloud && (_fileBytes != null || _localFilePath != null)) {
+    // Tải tệp MỚI CHỌN lên Supabase Storage (chỉ khi đã đăng nhập Google)
+    UploadedFile? uploaded;
+    String? uploadError;
+    final hasNewFile = _fileBytes != null || _pickedFileName != null;
+    if (_uploadToCloud && hasNewFile && AuthService().isSignedIn) {
       try {
-        final fileName = _pickedFileName ?? (_localFilePath?.split(RegExp(r'[\\/]')).last ?? 'file_attachment');
+        final fileName = _pickedFileName ??
+            (_localFilePath?.split(RegExp(r'[\\/]')).last ?? 'file_attachment');
         File? uploadFile;
         if (!kIsWeb && _localFilePath != null) {
           uploadFile = File(_localFilePath!);
         }
 
-        final cloudUrl = await CloudStorageService().uploadDocumentFile(
+        uploaded = await CloudStorageService().uploadDocumentFile(
           documentId: docPk,
           fileName: fileName,
           file: uploadFile,
           bytes: _fileBytes,
         );
-
-        if (cloudUrl != null) {
-          finalUrl = cloudUrl; // Lưu URL Cloud Storage làm externalUrl
-        }
       } catch (e) {
         debugPrint('Thông báo tải lên Cloud Storage: $e');
-        // Tiếp tục lưu cục bộ mà không gián đoạn người dùng
+        uploadError = e.toString();
+        // Tiếp tục lưu thông tin tài liệu, chỉ báo lỗi tải tệp
       }
     }
 
@@ -162,7 +175,9 @@ class _AddEditDocumentPageState extends State<AddEditDocumentPage> {
       final newDoc = DocumentsCompanion.insert(
         documentPk: docPk,
         title: _titleController.text.trim(),
-        note: drift.Value(_noteController.text.trim().isEmpty ? null : _noteController.text.trim()),
+        note: drift.Value(_noteController.text.trim().isEmpty
+            ? null
+            : _noteController.text.trim()),
         localFilePath: drift.Value(_localFilePath ?? _pickedFileName),
         externalUrl: drift.Value(finalUrl),
         subjectFk: _selectedSubjectFk!,
@@ -178,8 +193,11 @@ class _AddEditDocumentPageState extends State<AddEditDocumentPage> {
       // Update
       final updated = widget.document!.copyWith(
         title: _titleController.text.trim(),
-        note: drift.Value(_noteController.text.trim().isEmpty ? null : _noteController.text.trim()),
-        localFilePath: drift.Value(_localFilePath ?? widget.document!.localFilePath),
+        note: drift.Value(_noteController.text.trim().isEmpty
+            ? null
+            : _noteController.text.trim()),
+        localFilePath:
+            drift.Value(_localFilePath ?? widget.document!.localFilePath),
         externalUrl: drift.Value(finalUrl),
         subjectFk: _selectedSubjectFk!,
         docTypeFk: _selectedDocTypeFk!,
@@ -191,33 +209,42 @@ class _AddEditDocumentPageState extends State<AddEditDocumentPage> {
       await db.documentsDao.updateDocument(updated.toCompanion(true));
     }
 
+    var supabaseSyncSucceeded = true;
+
     // Tự động đồng bộ tài liệu sang Supabase nếu người dùng đã đăng nhập Google
     try {
       final currentUser = AuthService().currentUser;
       if (currentUser != null) {
-        final subMatch = _subjects.where((s) => s.subjectPk == _selectedSubjectFk);
+        final subMatch =
+            _subjects.where((s) => s.subjectPk == _selectedSubjectFk);
         final subName = subMatch.isNotEmpty ? subMatch.first.name : null;
-        final typeMatch = _docTypes.where((t) => t.docTypePk == _selectedDocTypeFk);
+        final subCode = subMatch.isNotEmpty ? subMatch.first.code : null;
+        final typeMatch =
+            _docTypes.where((t) => t.docTypePk == _selectedDocTypeFk);
         final docTypeName = typeMatch.isNotEmpty ? typeMatch.first.name : null;
 
-        await SupabaseService().saveDocument(
+        supabaseSyncSucceeded = await SupabaseService().saveDocument(
           documentId: docPk,
           ownerId: currentUser.uid,
           title: _titleController.text.trim(),
-          note: _noteController.text.trim().isEmpty ? null : _noteController.text.trim(),
-          subjectCode: _selectedSubjectFk,
+          note: _noteController.text.trim().isEmpty
+              ? null
+              : _noteController.text.trim(),
+          subjectCode: subCode,
           subjectName: subName,
           docType: docTypeName,
           status: _status,
           dueDate: _dueDate,
           isPinned: _isPinned,
           fileUrl: finalUrl,
-          fileName: _pickedFileName,
-          fileSize: _fileBytes?.length ?? 0,
+          filePath: uploaded?.storagePath,
+          fileName: uploaded?.fileName,
+          fileSize: uploaded?.size,
         );
       }
     } catch (e) {
       debugPrint('Thông báo đồng bộ Supabase: $e');
+      supabaseSyncSucceeded = false;
     }
 
     if (mounted) {
@@ -225,9 +252,21 @@ class _AddEditDocumentPageState extends State<AddEditDocumentPage> {
       Navigator.of(context).pop();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(finalUrl != null && finalUrl.contains('firebasestorage')
-              ? 'Đã lưu tài liệu và tải tệp lên Firebase Cloud Storage!'
-              : 'Đã lưu tài liệu thành công!'),
+          content: Text(
+            uploadError != null
+                ? 'Đã lưu tài liệu nhưng tải tệp lên Supabase Storage thất bại: $uploadError'
+                : !supabaseSyncSucceeded
+                    ? 'Đã lưu trên thiết bị nhưng chưa đồng bộ Supabase. Vào Cài đặt > Kiểm tra kết nối Supabase.'
+                    : uploaded != null
+                        ? 'Đã lưu tài liệu và tải tệp lên Supabase Storage + Database!'
+                        : AuthService().isSignedIn
+                            ? 'Đã lưu tài liệu và đồng bộ lên Supabase!'
+                            : 'Đã lưu tài liệu trên thiết bị!',
+          ),
+          duration: Duration(seconds: uploadError != null ? 8 : 4),
+          backgroundColor: uploadError != null || !supabaseSyncSucceeded
+              ? Colors.deepOrange
+              : null,
         ),
       );
     }
@@ -263,7 +302,8 @@ class _AddEditDocumentPageState extends State<AddEditDocumentPage> {
               : TextButton.icon(
                   onPressed: _saveDocument,
                   icon: const Icon(Icons.check),
-                  label: const Text('Lưu', style: TextStyle(fontWeight: FontWeight.bold)),
+                  label: const Text('Lưu',
+                      style: TextStyle(fontWeight: FontWeight.bold)),
                 ),
         ],
       ),
@@ -279,7 +319,8 @@ class _AddEditDocumentPageState extends State<AddEditDocumentPage> {
                 labelText: 'Tiêu Đề Tài Liệu *',
                 hintText: 'VD: Slide Chương 3, Bài tập lớn cuối kỳ...',
                 prefixIcon: const Icon(Icons.title_rounded),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                border:
+                    OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
               ),
               validator: (val) {
                 if (val == null || val.trim().isEmpty) {
@@ -295,12 +336,14 @@ class _AddEditDocumentPageState extends State<AddEditDocumentPage> {
               decoration: InputDecoration(
                 labelText: 'Môn Học *',
                 prefixIcon: const Icon(Icons.school_rounded),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                border:
+                    OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
               ),
               items: _subjects.map((sub) {
                 return DropdownMenuItem(
                   value: sub.subjectPk,
-                  child: Text('${sub.code} - ${sub.name}', overflow: TextOverflow.ellipsis),
+                  child: Text('${sub.code} - ${sub.name}',
+                      overflow: TextOverflow.ellipsis),
                 );
               }).toList(),
               onChanged: (val) {
@@ -316,7 +359,8 @@ class _AddEditDocumentPageState extends State<AddEditDocumentPage> {
                     value: _selectedDocTypeFk,
                     decoration: InputDecoration(
                       labelText: 'Phân Loại *',
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                      border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12)),
                     ),
                     items: _docTypes.map((type) {
                       return DropdownMenuItem(
@@ -335,7 +379,8 @@ class _AddEditDocumentPageState extends State<AddEditDocumentPage> {
                     value: _status,
                     decoration: InputDecoration(
                       labelText: 'Trạng Thái',
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                      border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12)),
                     ),
                     items: const [
                       DropdownMenuItem(value: 0, child: Text('Cần đọc')),
@@ -356,7 +401,8 @@ class _AddEditDocumentPageState extends State<AddEditDocumentPage> {
                 labelText: 'Liên Kết Web hoặc Tải từ Đám mây (URL)',
                 hintText: 'https://drive.google.com/... hoặc link tải tài liệu',
                 prefixIcon: const Icon(Icons.link_rounded),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                border:
+                    OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
               ),
             ),
             const SizedBox(height: 16),
@@ -382,8 +428,10 @@ class _AddEditDocumentPageState extends State<AddEditDocumentPage> {
                   overflow: TextOverflow.ellipsis,
                 ),
                 subtitle: _pickedFileName != null || _localFilePath != null
-                    ? const Text('Bấm để đổi tệp khác', style: TextStyle(fontSize: 12))
-                    : const Text('Hỗ trợ tải lên Firebase Cloud Storage', style: TextStyle(fontSize: 12)),
+                    ? const Text('Bấm để đổi tệp khác',
+                        style: TextStyle(fontSize: 12))
+                    : const Text('Hỗ trợ tải lên Supabase Storage',
+                        style: TextStyle(fontSize: 12)),
                 trailing: _pickedFileName != null || _localFilePath != null
                     ? IconButton(
                         icon: const Icon(Icons.clear, size: 20),
@@ -397,13 +445,15 @@ class _AddEditDocumentPageState extends State<AddEditDocumentPage> {
                 onTap: _pickFile,
               ),
             ),
-            if ((_pickedFileName != null || _localFilePath != null) && isUserSignedIn) ...[
+            if (_pickedFileName != null && isUserSignedIn) ...[
               const SizedBox(height: 8),
               SwitchListTile(
                 dense: true,
-                secondary: const Icon(Icons.cloud_upload_rounded, color: Colors.blue),
-                title: const Text('Tự động tải tệp lên Firebase Cloud Storage'),
-                subtitle: const Text('Lưu trữ đám mây giúp mở tệp từ bất kỳ thiết bị nào'),
+                secondary:
+                    const Icon(Icons.cloud_upload_rounded, color: Colors.blue),
+                title: const Text('Tự động tải tệp lên Supabase Storage'),
+                subtitle: const Text(
+                    'Lưu trữ đám mây giúp mở tệp từ bất kỳ thiết bị nào'),
                 value: _uploadToCloud,
                 onChanged: (val) => setState(() => _uploadToCloud = val),
               ),
@@ -423,7 +473,8 @@ class _AddEditDocumentPageState extends State<AddEditDocumentPage> {
                       : 'Chưa đặt hạn nộp (Deadline)',
                   style: const TextStyle(fontSize: 14),
                 ),
-                subtitle: const Text('Nhắc nhở bài tập và lịch thi', style: TextStyle(fontSize: 12)),
+                subtitle: const Text('Nhắc nhở bài tập và lịch thi',
+                    style: TextStyle(fontSize: 12)),
                 trailing: _dueDate != null
                     ? IconButton(
                         icon: const Icon(Icons.clear, size: 20),
@@ -437,7 +488,8 @@ class _AddEditDocumentPageState extends State<AddEditDocumentPage> {
             // Pin Switch
             SwitchListTile(
               title: const Text('Ghim lên đầu danh sách (Quan trọng)'),
-              subtitle: const Text('Hiển thị ưu tiên khi mở danh sách tài liệu'),
+              subtitle:
+                  const Text('Hiển thị ưu tiên khi mở danh sách tài liệu'),
               value: _isPinned,
               onChanged: (val) => setState(() => _isPinned = val),
             ),
@@ -447,16 +499,19 @@ class _AddEditDocumentPageState extends State<AddEditDocumentPage> {
               maxLines: 4,
               decoration: InputDecoration(
                 labelText: 'Ghi Chú & Tóm Tắt Nội Dung',
-                hintText: 'Ghi chú các ý chính của bài giảng, yêu cầu bài tập...',
+                hintText:
+                    'Ghi chú các ý chính của bài giảng, yêu cầu bài tập...',
                 alignLabelWithHint: true,
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                border:
+                    OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
               ),
             ),
             const SizedBox(height: 30),
             ElevatedButton(
               style: ElevatedButton.styleFrom(
                 padding: const EdgeInsets.symmetric(vertical: 16),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
               ),
               onPressed: _isSaving ? null : _saveDocument,
               child: _isSaving
@@ -466,7 +521,8 @@ class _AddEditDocumentPageState extends State<AddEditDocumentPage> {
                         SizedBox(
                           width: 20,
                           height: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: Colors.white),
                         ),
                         SizedBox(width: 12),
                         Text('Đang lưu và tải lên Cloud...'),
@@ -474,7 +530,8 @@ class _AddEditDocumentPageState extends State<AddEditDocumentPage> {
                     )
                   : Text(
                       isEditing ? 'Cập Nhật Tài Liệu' : 'Lưu Tài Liệu Mới',
-                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                      style: const TextStyle(
+                          fontSize: 16, fontWeight: FontWeight.bold),
                     ),
             ),
           ],

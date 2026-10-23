@@ -213,6 +213,14 @@ CREATE TRIGGER trigger_documents_updated_at
     BEFORE UPDATE ON public.documents
     FOR EACH ROW
     EXECUTE FUNCTION public.handle_updated_at();
+
+-- Cấp quyền SQL cho role authenticated (Firebase JWT đã được Supabase xác minh).
+-- Các quyền trên chỉ cho phép gọi thao tác; RLS bên dưới vẫn phải cho phép từng dòng.
+REVOKE ALL ON public.profiles, public.documents, public.document_permissions FROM anon;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.profiles TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.documents TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.document_permissions TO authenticated;
+GRANT USAGE, SELECT ON SEQUENCE public.document_permissions_id_seq TO authenticated;
 ```
 
 ---
@@ -262,7 +270,7 @@ Khi sinh viên A muốn chia sẻ bài giảng cho sinh viên B:
 
 Chính sách **Row Level Security (RLS)** trên Supabase đảm bảo không một ai có thể truy vấn hoặc can thiệp trái phép vào tài liệu của người khác, ngay cả khi họ biết ID tài liệu hay gọi API trực tiếp.
 
-Thực thi đoạn mã RLS sau trong **SQL Editor**:
+Sau khi bật Firebase trong **Authentication → Third-Party Auth**, thực thi đoạn mã sau trong **SQL Editor**. Ứng dụng gửi Firebase ID token qua Supabase SDK; `sub` là Firebase UID đã được Supabase xác minh.
 
 ```sql
 -- 1. Bật RLS trên toàn bộ các bảng
@@ -270,10 +278,21 @@ ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.documents ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.document_permissions ENABLE ROW LEVEL SECURITY;
 
+-- Không dùng lại các policy cũ dựa trên header do client tự gửi.
+DROP POLICY IF EXISTS "Public profiles are viewable by everyone" ON public.profiles;
+DROP POLICY IF EXISTS "Users can update their own profile" ON public.profiles;
+DROP POLICY IF EXISTS "Users can insert their own profile" ON public.profiles;
+DROP POLICY IF EXISTS "Users can view accessible documents" ON public.documents;
+DROP POLICY IF EXISTS "Users can insert their own documents" ON public.documents;
+DROP POLICY IF EXISTS "Owners and editors can update documents" ON public.documents;
+DROP POLICY IF EXISTS "Only owners can delete documents" ON public.documents;
+DROP POLICY IF EXISTS "View permissions" ON public.document_permissions;
+DROP POLICY IF EXISTS "Manage permissions" ON public.document_permissions;
+
 -- ==============================================================
 -- CHÍNH SÁCH BẢNG PROFILES
 -- ==============================================================
--- Ai cũng có thể đọc profile của người khác (để hiển thị tên/avatar người chia sẻ)
+-- Profile chỉ chứa thông tin hiển thị công khai cần thiết.
 CREATE POLICY "Public profiles are viewable by everyone" 
 ON public.profiles FOR SELECT 
 USING (true);
@@ -281,12 +300,13 @@ USING (true);
 -- Người dùng chỉ được sửa thông tin profile của chính mình
 CREATE POLICY "Users can update their own profile" 
 ON public.profiles FOR UPDATE 
-USING (request.jwt.claim('sub') = id OR current_setting('request.headers', true)::json->>'x-user-id' = id);
+USING ((auth.jwt() ->> 'sub') = id)
+WITH CHECK ((auth.jwt() ->> 'sub') = id);
 
 -- Cho phép chèn hồ sơ mới
 CREATE POLICY "Users can insert their own profile" 
 ON public.profiles FOR INSERT 
-WITH CHECK (true);
+WITH CHECK ((auth.jwt() ->> 'sub') = id);
 
 -- ==============================================================
 -- CHÍNH SÁCH BẢNG DOCUMENTS (BẢO MẬT CỐT LÕI)
@@ -300,14 +320,14 @@ WITH CHECK (true);
 CREATE POLICY "Users can view accessible documents" 
 ON public.documents FOR SELECT 
 USING (
-    owner_id = coalesce(current_setting('request.headers', true)::json->>'x-user-id', '')
+    owner_id = (auth.jwt() ->> 'sub')
     OR is_public = true
     OR EXISTS (
-        SELECT 1 FROM public.document_permissions dp 
-        WHERE dp.document_id = documents.id 
+        SELECT 1 FROM public.document_permissions dp
+        WHERE dp.document_id = documents.id
         AND (
-            dp.shared_with_user_id = coalesce(current_setting('request.headers', true)::json->>'x-user-id', '')
-            OR dp.shared_with_email = coalesce(current_setting('request.headers', true)::json->>'x-user-email', '')
+            dp.shared_with_user_id = (auth.jwt() ->> 'sub')
+            OR lower(dp.shared_with_email) = lower(coalesce(auth.jwt() ->> 'email', ''))
         )
     )
 );
@@ -317,7 +337,7 @@ USING (
 CREATE POLICY "Users can insert their own documents" 
 ON public.documents FOR INSERT 
 WITH CHECK (
-    owner_id = coalesce(current_setting('request.headers', true)::json->>'x-user-id', '')
+    owner_id = (auth.jwt() ->> 'sub')
 );
 
 -- C. QUYỀN CẬP NHẬT (UPDATE):
@@ -325,14 +345,26 @@ WITH CHECK (
 CREATE POLICY "Owners and editors can update documents" 
 ON public.documents FOR UPDATE 
 USING (
-    owner_id = coalesce(current_setting('request.headers', true)::json->>'x-user-id', '')
+    owner_id = (auth.jwt() ->> 'sub')
     OR EXISTS (
         SELECT 1 FROM public.document_permissions dp 
         WHERE dp.document_id = documents.id 
         AND dp.permission_level IN ('editor', 'admin')
         AND (
-            dp.shared_with_user_id = coalesce(current_setting('request.headers', true)::json->>'x-user-id', '')
-            OR dp.shared_with_email = coalesce(current_setting('request.headers', true)::json->>'x-user-email', '')
+            dp.shared_with_user_id = (auth.jwt() ->> 'sub')
+            OR lower(dp.shared_with_email) = lower(coalesce(auth.jwt() ->> 'email', ''))
+        )
+    )
+)
+WITH CHECK (
+    owner_id = (auth.jwt() ->> 'sub')
+    OR EXISTS (
+        SELECT 1 FROM public.document_permissions dp
+        WHERE dp.document_id = documents.id
+        AND dp.permission_level IN ('editor', 'admin')
+        AND (
+            dp.shared_with_user_id = (auth.jwt() ->> 'sub')
+            OR lower(dp.shared_with_email) = lower(coalesce(auth.jwt() ->> 'email', ''))
         )
     )
 );
@@ -342,31 +374,51 @@ USING (
 CREATE POLICY "Only owners can delete documents" 
 ON public.documents FOR DELETE 
 USING (
-    owner_id = coalesce(current_setting('request.headers', true)::json->>'x-user-id', '')
+    owner_id = (auth.jwt() ->> 'sub')
 );
 
 -- ==============================================================
 -- CHÍNH SÁCH BẢNG DOCUMENT_PERMISSIONS
 -- ==============================================================
+
+-- Hàm SECURITY DEFINER tránh vòng lặp RLS khi kiểm tra chủ tài liệu.
+CREATE OR REPLACE FUNCTION public.owns_document(document_id TEXT)
+RETURNS BOOLEAN
+LANGUAGE SQL
+STABLE
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+    SELECT EXISTS (
+        SELECT 1
+        FROM public.documents d
+        WHERE d.id = $1
+          AND d.owner_id = (auth.jwt() ->> 'sub')
+    );
+$$;
+
+REVOKE ALL ON FUNCTION public.owns_document(TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.owns_document(TEXT) TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.profiles TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.documents TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.document_permissions TO authenticated;
+GRANT USAGE, SELECT ON SEQUENCE public.document_permissions_id_seq TO authenticated;
+REVOKE ALL ON public.profiles, public.documents, public.document_permissions FROM anon;
+
 -- Xem quyền: Chủ tài liệu hoặc người được chia sẻ
 CREATE POLICY "View permissions" 
 ON public.document_permissions FOR SELECT 
 USING (
-    granted_by = coalesce(current_setting('request.headers', true)::json->>'x-user-id', '')
-    OR shared_with_user_id = coalesce(current_setting('request.headers', true)::json->>'x-user-id', '')
-    OR shared_with_email = coalesce(current_setting('request.headers', true)::json->>'x-user-email', '')
+    granted_by = (auth.jwt() ->> 'sub')
+    OR shared_with_user_id = (auth.jwt() ->> 'sub')
+    OR lower(shared_with_email) = lower(coalesce(auth.jwt() ->> 'email', ''))
 );
 
 -- Thêm/Xóa quyền chia sẻ: Chỉ chủ sở hữu tài liệu
 CREATE POLICY "Manage permissions" 
 ON public.document_permissions FOR ALL 
-USING (
-    EXISTS (
-        SELECT 1 FROM public.documents d 
-        WHERE d.id = document_permissions.document_id 
-        AND d.owner_id = coalesce(current_setting('request.headers', true)::json->>'x-user-id', '')
-    )
-);
+USING (public.owns_document(document_id))
+WITH CHECK (public.owns_document(document_id));
 ```
 
 ---
@@ -396,12 +448,13 @@ Dưới đây là các thao tác bạn chỉ cần thực hiện 1 lần trên t
 
 ---
 
-### Bước 3: Chạy mã SQL tạo bảng và bảo mật RLS
+### Bước 3: Kết nối Firebase Auth và chạy SQL tạo bảng
 1. Ở menu bên trái Supabase Dashboard, bấm vào biểu tượng **SQL Editor** *(hình trang giấy có chữ `>_`)*.
 2. Bấm nút **"New query"** (hoặc dấu `+`).
-3. Copy toàn bộ đoạn mã SQL ở **Mục 4 và Mục 6** trong tài liệu này $\rightarrow$ Dán vào khung soạn thảo.
-4. Bấm nút màu xanh **RUN** (hoặc nhấn tổ hợp phím `Ctrl + Enter`).
-5. Kết quả hiện `Success. No rows returned` $\rightarrow$ Toàn bộ 3 bảng và các chính sách bảo mật RLS đã được kích hoạt thành công 100%!
+3. Copy và chạy đoạn SQL tạo bảng ở **Mục 4**, bao gồm các lệnh `GRANT` ở cuối mục.
+4. Trong Supabase Dashboard, mở **Authentication → Third-Party Auth → Add provider → Firebase** và nhập Firebase Project ID `study-materials-app-8fcf8` (đọc từ `lib/firebase_options.dart`). Lưu cấu hình. Việc này cho phép Supabase xác minh Firebase ID token; không dán Firebase service-account key hoặc Supabase `service_role` key vào ứng dụng.
+5. Chạy SQL policy ở **Mục 6** rồi bấm nút màu xanh **RUN** (hoặc nhấn `Ctrl + Enter`). Mục này thay các policy cũ dựa trên `x-user-id`/`x-user-email` và cấp quyền cho role `authenticated`.
+6. Ứng dụng chỉ gửi Firebase ID token khi người dùng đăng nhập. Không xóa RLS hoặc đặt policy `USING (true)` để né lỗi.
 
 ---
 

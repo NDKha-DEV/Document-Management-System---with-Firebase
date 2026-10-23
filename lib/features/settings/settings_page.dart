@@ -254,7 +254,15 @@ class _SettingsPageState extends State<SettingsPage> {
                   ),
                   _buildArchitectureBullet(
                     'Cloud File Storage:',
-                    'Lưu trữ file tài liệu đính kèm trên Firebase Storage bảo mật với Security Rules.',
+                    'Lưu trữ file tài liệu đính kèm trên Supabase Storage (bucket private), tải về bằng signed URL theo quyền chia sẻ (RLS).',
+                  ),
+                  _buildArchitectureBullet(
+                    'Supabase PostgreSQL:',
+                    '3 bảng profiles / documents / document_permissions lưu metadata, tìm kiếm và quyền chia sẻ (viewer / editor / admin).',
+                  ),
+                  _buildArchitectureBullet(
+                    'Row Level Security:',
+                    'Supabase xác minh Firebase ID token; chính sách RLS dựa trên Firebase UID quyết định ai được xem / sửa / chia sẻ / xóa từng tài liệu.',
                   ),
                   _buildArchitectureBullet(
                     'Reactive Pipeline:',
@@ -511,6 +519,21 @@ class _SettingsPageState extends State<SettingsPage> {
             const SizedBox(height: 14),
             SizedBox(
               width: double.infinity,
+              child: ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.deepPurple,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+                icon: const Icon(Icons.network_check_rounded, size: 18),
+                label: const Text('Kiểm tra kết nối Supabase + Firebase Auth'),
+                onPressed: _runSupabaseDiagnostics,
+              ),
+            ),
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
               child: OutlinedButton.icon(
                 style: OutlinedButton.styleFrom(
                   foregroundColor: Colors.deepPurple,
@@ -528,13 +551,70 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
+  /// Gọi RPC whoami() để xem Supabase nhận diện token Firebase hiện tại ra sao
+  Future<void> _runSupabaseDiagnostics() async {
+    final user = AuthService().currentUser;
+    final lines = <(bool, String)>[];
+
+    lines.add((SupabaseService().isInitialized, 'Supabase client: ${SupabaseConfig.supabaseUrl}'));
+    lines.add((user != null, user != null ? 'Firebase Auth: ${user.email}' : 'Firebase Auth: chưa đăng nhập Google'));
+
+    try {
+      final who = await SupabaseService().whoAmI();
+      final uid = who['firebase_uid'] as String?;
+      if (user == null) {
+        lines.add((true, 'Supabase phản hồi (khách) — RLS sẽ trả về 0 tài liệu'));
+      } else if (uid == user.uid) {
+        lines.add((true, 'Supabase đã xác minh token Firebase: uid = $uid'));
+        lines.add((true, 'Email trong token: ${who['email']}'));
+      } else {
+        lines.add((false,
+            'Supabase KHÔNG nhận ra token Firebase (iss = ${who['iss']}). Kiểm tra Third-Party Auth > Firebase.'));
+      }
+      lines.add((true, 'Postgres role: ${who['postgres_role']}'));
+    } on CloudException catch (e) {
+      lines.add((false, e.message));
+    }
+
+    if (user != null) {
+      try {
+        final mine = await SupabaseService().searchDocuments(ownedByMe: true);
+        final shared = await SupabaseService().searchDocuments(ownedByMe: false);
+        lines.add((true, 'Đọc bảng documents: ${mine.length} của tôi, ${shared.length} được chia sẻ'));
+      } on CloudException catch (e) {
+        lines.add((false, e.message));
+      }
+    }
+
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Chẩn đoán kết nối Cloud'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: lines
+                .map((l) => ListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(l.$1 ? Icons.check_circle : Icons.error,
+                          color: l.$1 ? Colors.green : Colors.red),
+                      title: Text(l.$2, style: const TextStyle(fontSize: 13)),
+                    ))
+                .toList(),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Đóng')),
+        ],
+      ),
+    );
+  }
+
   void _showSupabaseConfigDialog() {
-    final urlController = TextEditingController(
-      text: SupabaseConfig.supabaseUrl == 'https://xyzcompany.supabase.co' ? '' : SupabaseConfig.supabaseUrl,
-    );
-    final keyController = TextEditingController(
-      text: SupabaseConfig.supabaseAnonKey.startsWith('eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...') ? '' : SupabaseConfig.supabaseAnonKey,
-    );
+    final urlController = TextEditingController(text: SupabaseConfig.supabaseUrl);
+    final keyController = TextEditingController(text: SupabaseConfig.supabaseAnonKey);
 
     showDialog(
       context: context,
@@ -570,8 +650,8 @@ class _SettingsPageState extends State<SettingsPage> {
                 controller: keyController,
                 maxLines: 2,
                 decoration: const InputDecoration(
-                  labelText: 'anon public key',
-                  hintText: 'eyJhbGciOi...',
+                  labelText: 'Publishable key (hoặc anon key)',
+                  hintText: 'sb_publishable_...',
                   border: OutlineInputBorder(),
                   prefixIcon: Icon(Icons.key),
                 ),

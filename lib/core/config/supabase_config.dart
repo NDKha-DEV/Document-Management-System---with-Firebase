@@ -1,15 +1,17 @@
 import 'package:shared_preferences/shared_preferences.dart';
 
 class SupabaseConfig {
-  /// Giá trị mặc định khi chưa cấu hình qua SharedPreferences
+  /// Project URL & Publishable key (an toàn để nhúng vào client — mọi truy cập
+  /// dữ liệu đều do Row Level Security kiểm soát). Có thể ghi đè bằng
+  /// --dart-define hoặc trong màn hình Cài đặt.
   static const String defaultUrl = String.fromEnvironment(
     'SUPABASE_URL',
-    defaultValue: 'https://xyzcompany.supabase.co',
+    defaultValue: 'https://ieuqfancpwxgukmlnumz.supabase.co',
   );
 
   static const String defaultAnonKey = String.fromEnvironment(
     'SUPABASE_ANON_KEY',
-    defaultValue: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+    defaultValue: 'sb_publishable_oJNZWUqrHuiQ3XWq0-q5Uw_FERLQZXR',
   );
 
   static String _activeUrl = defaultUrl;
@@ -43,8 +45,5 @@ class SupabaseConfig {
   }
 
   static bool get isConfigured =>
-      _activeUrl.isNotEmpty &&
-      _activeAnonKey.isNotEmpty &&
-      _activeUrl != 'https://xyzcompany.supabase.co' &&
-      _activeAnonKey != 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...';
+      _activeUrl.startsWith('https://') && _activeAnonKey.isNotEmpty;
 }

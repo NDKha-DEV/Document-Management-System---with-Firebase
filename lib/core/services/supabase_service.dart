@@ -1,23 +1,53 @@
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:firebase_auth/firebase_auth.dart' as fb;
+import 'package:firebase_core/firebase_core.dart';
 import '../config/supabase_config.dart';
+import '../models/cloud_document.dart';
+
+/// Lỗi Supabase đã được dịch sang thông báo dễ hiểu.
+class CloudException implements Exception {
+  final String message;
+  final bool blockedByRls;
+  CloudException(this.message, {this.blockedByRls = false});
+
+  @override
+  String toString() => message;
+}
 
 class SupabaseService {
   static final SupabaseService _instance = SupabaseService._internal();
   factory SupabaseService() => _instance;
   SupabaseService._internal();
 
+  static const _documentSelect = '''
+    *,
+    profiles:owner_id (display_name, email, avatar_url),
+    permissions:document_permissions (
+      id, shared_with_email, shared_with_user_id, permission_level
+    )
+  ''';
+
   SupabaseClient? _client;
   bool _isInitialized = false;
+
+  /// Lỗi gần nhất khi lưu tài liệu (hiển thị cho người dùng để chẩn đoán)
+  String? lastSaveError;
 
   bool get isInitialized => _isInitialized;
   SupabaseClient? get client => _client;
 
+  /// Supabase gọi hàm này trước mỗi request: gửi Firebase ID token làm JWT.
+  /// Supabase (Third-Party Auth: Firebase) xác minh chữ ký token, RLS đọc claim sub/email.
+  Future<String?> _firebaseAccessToken() async {
+    if (Firebase.apps.isEmpty) return null;
+    return fb.FirebaseAuth.instance.currentUser?.getIdToken();
+  }
+
   Future<void> initialize() async {
     await SupabaseConfig.loadConfig();
     if (!SupabaseConfig.isConfigured) {
-      debugPrint('Supabase chưa được điền URL/Anon Key. Đang hoạt động ở chế độ chờ cấu hình.');
+      debugPrint('Supabase chưa được điền URL/Key.');
       return;
     }
 
@@ -25,6 +55,7 @@ class SupabaseService {
       await Supabase.initialize(
         url: SupabaseConfig.supabaseUrl,
         anonKey: SupabaseConfig.supabaseAnonKey,
+        accessToken: _firebaseAccessToken,
       );
       _client = Supabase.instance.client;
       _isInitialized = true;
@@ -38,9 +69,13 @@ class SupabaseService {
   Future<bool> updateConfiguration(String url, String anonKey) async {
     await SupabaseConfig.updateConfig(url, anonKey);
     try {
+      if (_isInitialized) {
+        await Supabase.instance.dispose();
+      }
       await Supabase.initialize(
         url: url.trim(),
         anonKey: anonKey.trim(),
+        accessToken: _firebaseAccessToken,
       );
       _client = Supabase.instance.client;
       _isInitialized = true;
@@ -48,6 +83,114 @@ class SupabaseService {
     } catch (e) {
       debugPrint('Lỗi cập nhật cấu hình Supabase: $e');
       return false;
+    }
+  }
+
+  SupabaseClient _requireClient() {
+    final c = _client;
+    if (c == null) {
+      throw CloudException(
+          'Supabase chưa sẵn sàng. Kiểm tra Project URL / Key trong Cài đặt.');
+    }
+    return c;
+  }
+
+  fb.User _requireUser() {
+    final user =
+        Firebase.apps.isEmpty ? null : fb.FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      throw CloudException('Bạn cần đăng nhập Google để dùng tính năng Cloud.');
+    }
+    return user;
+  }
+
+  /// Chuyển lỗi PostgREST thành thông báo tiếng Việt.
+  CloudException _translate(Object e) {
+    if (e is CloudException) return e;
+    if (e is PostgrestException) {
+      final code = e.code ?? '';
+      if (code == '42501' || e.message.contains('row-level security')) {
+        return CloudException(
+          'Bị chặn bởi chính sách bảo mật RLS: bạn không có quyền thực hiện thao tác này.',
+          blockedByRls: true,
+        );
+      }
+      if (code.startsWith('PGRST3') ||
+          e.message.toLowerCase().contains('jwt')) {
+        return CloudException(
+            'Supabase từ chối token Firebase (${e.message}). Hãy bật Authentication > Third-Party Auth > Firebase (project study-materials-app-8fcf8).');
+      }
+      if (code == '42P01' || code == 'PGRST205' || code == 'PGRST202') {
+        return CloudException(
+            'Thiếu bảng/hàm trên Supabase. Hãy chạy supabase/01_setup_schema_rls.sql trong SQL Editor.');
+      }
+      if (code == '23505') {
+        return CloudException('Dữ liệu bị trùng (${e.details ?? e.message}).');
+      }
+      return CloudException('Lỗi Supabase [$code]: ${e.message}');
+    }
+    return CloudException('Lỗi kết nối Supabase: $e');
+  }
+
+  /// Mô tả lỗi kèm mã gốc của Postgres/PostgREST để dễ chẩn đoán
+  String _describe(Object e) {
+    if (e is PostgrestException) {
+      return '${_translate(e).message} [${e.code}: ${e.message}${e.details != null ? ' | ${e.details}' : ''}]';
+    }
+    return _translate(e).message;
+  }
+
+  /// Chẩn đoán ghi dữ liệu: upsert hồ sơ, upsert tài liệu thử, cập nhật, rồi xóa.
+  Future<List<(bool, String)>> diagnoseWrites(fb.User user) async {
+    final c = _requireClient();
+    final out = <(bool, String)>[];
+    final testId = 'diag-${user.uid}';
+
+    Future<void> step(String label, Future<void> Function() run) async {
+      try {
+        await run();
+        out.add((true, label));
+      } catch (e) {
+        out.add((false, '$label: ${_describe(e)}'));
+      }
+    }
+
+    await step('Ghi hồ sơ (profiles upsert)', () async {
+      await c.from('profiles').upsert({
+        'id': user.uid,
+        'email': (user.email ?? '').toLowerCase(),
+        'display_name': user.displayName ?? 'Sinh viên',
+        'avatar_url': user.photoURL,
+      });
+    });
+    await step('Tạo tài liệu thử (documents upsert)', () async {
+      await c.from('documents').upsert({
+        'id': testId,
+        'owner_id': user.uid,
+        'title': 'Tài liệu chẩn đoán',
+      });
+    });
+    await step('Cập nhật tài liệu thử (upsert lần 2)', () async {
+      await c.from('documents').upsert({
+        'id': testId,
+        'owner_id': user.uid,
+        'title': 'Tài liệu chẩn đoán (2)',
+      });
+    });
+    await step('Xóa tài liệu thử', () async {
+      await c.from('documents').delete().eq('id', testId);
+    });
+    return out;
+  }
+
+  /// Chẩn đoán: Supabase nhận diện token Firebase hiện tại là ai?
+  Future<Map<String, dynamic>> whoAmI() async {
+    final c = _requireClient();
+    try {
+      final res = await c.rpc('whoami');
+      return Map<String, dynamic>.from(res as Map);
+    } catch (e) {
+      throw _translate(e);
     }
   }
 
@@ -59,58 +202,71 @@ class SupabaseService {
     try {
       await c.from('profiles').upsert({
         'id': user.uid,
-        'email': user.email ?? '',
+        'email': (user.email ?? '').toLowerCase(),
         'display_name': user.displayName ?? 'Sinh viên',
         'avatar_url': user.photoURL,
-        'last_sign_in_at': DateTime.now().toIso8601String(),
+        'last_sign_in_at': DateTime.now().toUtc().toIso8601String(),
       });
       debugPrint('Đã đồng bộ profile ${user.email} sang Supabase.');
     } catch (e) {
-      debugPrint('Lỗi đồng bộ profile sang Supabase: $e');
+      debugPrint('Lỗi đồng bộ profile sang Supabase: ${_translate(e)}');
     }
   }
 
-  /// 2. Lấy Danh sách Tài liệu Của Tôi và Tài Liệu Được Chia Sẻ Cho Tôi
-  Future<List<Map<String, dynamic>>> getAccessibleDocuments({
-    required String currentUserId,
-    required String currentUserEmail,
+  /// Loại bỏ ký tự đặc biệt của cú pháp filter PostgREST
+  String _sanitizeSearch(String q) =>
+      q.replaceAll(RegExp(r'[,()%*\\"]'), ' ').trim();
+
+  /// 2. Tìm kiếm tài liệu trên Supabase. RLS tự lọc những dòng người dùng được xem.
+  ///    [ownedByMe] = true: chỉ tài liệu của tôi; false: chỉ tài liệu người khác chia sẻ.
+  Future<List<CloudDocument>> searchDocuments({
+    required bool ownedByMe,
     String? searchQuery,
-    String? subjectCode,
   }) async {
-    final c = _client;
-    if (c == null) return [];
+    final c = _requireClient();
+    final user = _requireUser();
 
     try {
-      // Thiết lập header ngữ cảnh cho Row Level Security (RLS)
-      var query = c.from('documents').select('''
-        *,
-        profiles:owner_id (display_name, email, avatar_url),
-        permissions:document_permissions (
-          id, shared_with_email, permission_level
-        )
-      ''');
+      var query = c.from('documents').select(_documentSelect);
+      query = ownedByMe
+          ? query.eq('owner_id', user.uid)
+          : query.neq('owner_id', user.uid);
 
-      if (searchQuery != null && searchQuery.trim().isNotEmpty) {
-        final term = searchQuery.trim();
-        query = query.or('title.ilike.%$term%,note.ilike.%$term%');
-      }
-
-      if (subjectCode != null && subjectCode.isNotEmpty) {
-        query = query.eq('subject_code', subjectCode);
+      final term = _sanitizeSearch(searchQuery ?? '');
+      if (term.isNotEmpty) {
+        query = query.or(
+            'title.ilike.%$term%,note.ilike.%$term%,subject_code.ilike.%$term%,subject_name.ilike.%$term%,file_name.ilike.%$term%');
       }
 
       final response = await query
           .order('is_pinned', ascending: false)
-          .order('created_at', ascending: false);
+          .order('updated_at', ascending: false);
 
-      return List<Map<String, dynamic>>.from(response);
+      return response
+          .map<CloudDocument>((m) => CloudDocument.fromMap(m))
+          .toList();
     } catch (e) {
-      debugPrint('Lỗi truy vấn tài liệu Supabase: $e');
-      return [];
+      throw _translate(e);
     }
   }
 
-  /// 3. Lưu hoặc Cập nhật Tài liệu lên Supabase
+  /// Lấy 1 tài liệu (null nếu không tồn tại hoặc RLS không cho xem)
+  Future<CloudDocument?> getDocument(String documentId) async {
+    final c = _requireClient();
+    try {
+      final row = await c
+          .from('documents')
+          .select(_documentSelect)
+          .eq('id', documentId)
+          .maybeSingle();
+      return row == null ? null : CloudDocument.fromMap(row);
+    } catch (e) {
+      throw _translate(e);
+    }
+  }
+
+  /// 3. Tạo mới hoặc cập nhật tài liệu của chính mình (owner) lên Supabase.
+  ///    Các trường file chỉ ghi khi có giá trị, tránh xóa mất file cũ khi sửa.
   Future<bool> saveDocument({
     required String documentId,
     required String ownerId,
@@ -123,6 +279,7 @@ class SupabaseService {
     DateTime? dueDate,
     bool? isPinned,
     String? fileUrl,
+    String? filePath,
     String? fileName,
     int? fileSize,
     bool? isPublic,
@@ -130,29 +287,71 @@ class SupabaseService {
     final c = _client;
     if (c == null) return false;
 
+    final data = <String, dynamic>{
+      'id': documentId,
+      'owner_id': ownerId,
+      'title': title,
+      'note': note,
+      'subject_code': subjectCode,
+      'subject_name': subjectName,
+      'doc_type': docType ?? 'Bài tập',
+      'status': status ?? 0,
+      'due_date': dueDate?.toUtc().toIso8601String(),
+      'is_pinned': isPinned ?? false,
+      'file_url': fileUrl,
+    };
+    if (filePath != null) {
+      data['file_path'] = filePath;
+      data['storage_provider'] = 'supabase_storage';
+    }
+    if (fileName != null) data['file_name'] = fileName;
+    if (fileSize != null) data['file_size'] = fileSize;
+    if (isPublic != null) data['is_public'] = isPublic;
+
+    lastSaveError = null;
     try {
-      await c.from('documents').upsert({
-        'id': documentId,
-        'owner_id': ownerId,
-        'title': title,
-        'note': note,
-        'subject_code': subjectCode,
-        'subject_name': subjectName,
-        'doc_type': docType ?? 'Bài tập',
-        'status': status ?? 0,
-        'due_date': dueDate?.toIso8601String(),
-        'is_pinned': isPinned ?? false,
-        'file_url': fileUrl,
-        'file_name': fileName,
-        'file_size': fileSize ?? 0,
-        'storage_provider': 'firebase_storage',
-        'is_public': isPublic ?? false,
-        'updated_at': DateTime.now().toIso8601String(),
-      });
+      await c.from('documents').upsert(data);
       return true;
     } catch (e) {
-      debugPrint('Lỗi lưu tài liệu lên Supabase: $e');
+      lastSaveError = _describe(e);
+      debugPrint('Lỗi lưu tài liệu lên Supabase: $lastSaveError');
       return false;
+    }
+  }
+
+  /// Cập nhật một phần tài liệu (owner / admin / editor).
+  /// Ném CloudException(blockedByRls) nếu RLS không cho sửa (0 dòng bị ảnh hưởng).
+  Future<void> updateDocument(
+      String documentId, Map<String, dynamic> fields) async {
+    final c = _requireClient();
+    try {
+      final rows = await c
+          .from('documents')
+          .update(fields)
+          .eq('id', documentId)
+          .select('id');
+      if (rows.isEmpty) {
+        throw CloudException(
+          'Bị chặn bởi RLS: bạn chỉ có quyền xem tài liệu này, không được sửa.',
+          blockedByRls: true,
+        );
+      }
+    } catch (e) {
+      throw _translate(e);
+    }
+  }
+
+  /// Đồng bộ nhẹ từ thao tác cục bộ (đổi trạng thái / ghim). Bỏ qua lỗi.
+  Future<void> patchOwnDocumentSilently(
+      String documentId, Map<String, dynamic> fields) async {
+    final c = _client;
+    final signedIn =
+        Firebase.apps.isNotEmpty && fb.FirebaseAuth.instance.currentUser != null;
+    if (c == null || !signedIn) return;
+    try {
+      await c.from('documents').update(fields).eq('id', documentId);
+    } catch (e) {
+      debugPrint('Không đồng bộ được thay đổi lên Supabase: $e');
     }
   }
 
@@ -169,41 +368,55 @@ class SupabaseService {
       return ShareResult(success: false, message: 'Supabase chưa sẵn sàng.');
     }
 
+    final email = recipientEmail.trim().toLowerCase();
+    final me = Firebase.apps.isEmpty
+        ? null
+        : fb.FirebaseAuth.instance.currentUser?.email?.toLowerCase();
+    if (email == me) {
+      return ShareResult(
+          success: false, message: 'Không thể tự chia sẻ cho chính mình.');
+    }
+
     try {
       // Tìm xem người nhận đã có tài khoản trong bảng profiles chưa
       final userLookup = await c
           .from('profiles')
           .select('id')
-          .eq('email', recipientEmail.trim().toLowerCase())
+          .eq('email', email)
           .maybeSingle();
 
-      final String? recipientUid = userLookup != null ? userLookup['id'] as String? : null;
+      final String? recipientUid =
+          userLookup != null ? userLookup['id'] as String? : null;
 
-      // Thêm hoặc cập nhật quyền chia sẻ
       await c.from('document_permissions').upsert({
         'document_id': documentId,
-        'shared_with_email': recipientEmail.trim().toLowerCase(),
+        'shared_with_email': email,
         'shared_with_user_id': recipientUid,
         'permission_level': permissionLevel,
         'granted_by': grantedBy,
-        'created_at': DateTime.now().toIso8601String(),
       }, onConflict: 'document_id,shared_with_email');
 
       return ShareResult(
         success: true,
-        message: 'Đã chia sẻ tài liệu thành công cho $recipientEmail với quyền $permissionLevel.',
+        message: recipientUid != null
+            ? 'Đã chia sẻ cho $email với quyền $permissionLevel.'
+            : 'Đã chia sẻ cho $email ($permissionLevel). Người này sẽ thấy tài liệu khi đăng nhập lần đầu.',
       );
     } catch (e) {
-      debugPrint('Lỗi chia sẻ tài liệu: $e');
+      final err = _translate(e);
+      debugPrint('Lỗi chia sẻ tài liệu: $err');
       return ShareResult(
         success: false,
-        message: 'Lỗi khi chia sẻ tài liệu: $e',
+        message: err.blockedByRls
+            ? 'Bị chặn bởi RLS: bạn không có quyền chia sẻ tài liệu này${permissionLevel == 'admin' ? ' với quyền Admin' : ''}.'
+            : err.message,
       );
     }
   }
 
   /// 5. Lấy Danh sách Người đã được Chia sẻ của 1 Tài liệu
-  Future<List<Map<String, dynamic>>> getDocumentPermissions(String documentId) async {
+  Future<List<Map<String, dynamic>>> getDocumentPermissions(
+      String documentId) async {
     final c = _client;
     if (c == null) return [];
 
@@ -211,7 +424,8 @@ class SupabaseService {
       final response = await c
           .from('document_permissions')
           .select('*')
-          .eq('document_id', documentId);
+          .eq('document_id', documentId)
+          .order('created_at');
       return List<Map<String, dynamic>>.from(response);
     } catch (e) {
       debugPrint('Lỗi lấy danh sách quyền: $e');
@@ -225,8 +439,12 @@ class SupabaseService {
     if (c == null) return false;
 
     try {
-      await c.from('document_permissions').delete().eq('id', permissionId);
-      return true;
+      final rows = await c
+          .from('document_permissions')
+          .delete()
+          .eq('id', permissionId)
+          .select('id');
+      return rows.isNotEmpty;
     } catch (e) {
       debugPrint('Lỗi thu hồi quyền: $e');
       return false;
@@ -234,17 +452,108 @@ class SupabaseService {
   }
 
   /// 7. Xóa Tài liệu trên Supabase (CASCADE xóa sạch quyền trong document_permissions)
+  /// Trả về true nếu có dòng bị xóa (RLS chỉ cho owner xóa).
   Future<bool> deleteDocument(String documentId) async {
     final c = _client;
     if (c == null) return false;
 
     try {
-      await c.from('documents').delete().eq('id', documentId);
-      return true;
+      final rows = await c
+          .from('documents')
+          .delete()
+          .eq('id', documentId)
+          .select('id');
+      return rows.isNotEmpty;
     } catch (e) {
       debugPrint('Lỗi xóa tài liệu trên Supabase: $e');
       return false;
     }
+  }
+
+  /// 8. Kiểm thử quyền thật trên server: gửi thẳng request tới Supabase
+  ///    (bỏ qua mọi kiểm tra ở giao diện) và ghi nhận RLS cho phép hay chặn.
+  Future<List<PermissionProbe>> probePermissions(CloudDocument doc) async {
+    final c = _requireClient();
+    final user = _requireUser();
+    final results = <PermissionProbe>[];
+
+    // XEM
+    try {
+      final row = await c
+          .from('documents')
+          .select('id')
+          .eq('id', doc.id)
+          .maybeSingle();
+      results.add(PermissionProbe('Xem tài liệu (SELECT)', row != null));
+    } catch (e) {
+      results.add(PermissionProbe('Xem tài liệu (SELECT)', false,
+          detail: _translate(e).message));
+    }
+
+    // TẢI TỆP: xin signed URL từ Supabase Storage (RLS trên storage.objects)
+    if (doc.filePath != null) {
+      try {
+        await c.storage.from('documents').createSignedUrl(doc.filePath!, 60);
+        results.add(PermissionProbe('Tải tệp đính kèm (Storage)', true));
+      } catch (e) {
+        results.add(PermissionProbe('Tải tệp đính kèm (Storage)', false));
+      }
+    }
+
+    // SỬA: ghi lại đúng giá trị hiện tại (không làm thay đổi nội dung)
+    try {
+      final rows = await c
+          .from('documents')
+          .update({'title': doc.title})
+          .eq('id', doc.id)
+          .select('id');
+      results.add(PermissionProbe('Sửa tài liệu (UPDATE)', rows.isNotEmpty));
+    } catch (e) {
+      results.add(PermissionProbe('Sửa tài liệu (UPDATE)', false,
+          detail: _translate(e).message));
+    }
+
+    // CHIA SẺ: thử cấp quyền viewer cho một email kiểm thử, nếu được thì thu hồi ngay
+    const probeEmail = 'rls-probe@example.invalid';
+    try {
+      final rows = await c.from('document_permissions').insert({
+        'document_id': doc.id,
+        'shared_with_email': probeEmail,
+        'permission_level': 'viewer',
+        'granted_by': user.uid,
+      }).select('id');
+      results.add(PermissionProbe('Chia sẻ tiếp (INSERT quyền)', rows.isNotEmpty));
+      if (rows.isNotEmpty) {
+        await c
+            .from('document_permissions')
+            .delete()
+            .eq('id', rows.first['id'] as int);
+      }
+    } catch (e) {
+      final err = _translate(e);
+      results.add(PermissionProbe('Chia sẻ tiếp (INSERT quyền)', false,
+          detail: err.blockedByRls ? null : err.message));
+    }
+
+    // XÓA: chỉ thử thật khi KHÔNG phải chủ sở hữu (tránh xóa mất tài liệu của chính mình)
+    if (doc.ownerId == user.uid) {
+      results.add(PermissionProbe('Xóa tài liệu (DELETE)', true,
+          detail: 'Chủ sở hữu luôn được xóa (không chạy thử để tránh mất dữ liệu)'));
+    } else {
+      try {
+        final rows = await c
+            .from('documents')
+            .delete()
+            .eq('id', doc.id)
+            .select('id');
+        results.add(PermissionProbe('Xóa tài liệu (DELETE)', rows.isNotEmpty));
+      } catch (e) {
+        results.add(PermissionProbe('Xóa tài liệu (DELETE)', false,
+            detail: _translate(e).message));
+      }
+    }
+
+    return results;
   }
 }
 
@@ -253,4 +562,12 @@ class ShareResult {
   final String message;
 
   ShareResult({required this.success, required this.message});
+}
+
+class PermissionProbe {
+  final String action;
+  final bool allowed;
+  final String? detail;
+
+  PermissionProbe(this.action, this.allowed, {this.detail});
 }

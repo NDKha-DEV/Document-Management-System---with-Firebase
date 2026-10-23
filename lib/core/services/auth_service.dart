@@ -12,6 +12,7 @@ class AuthService {
   FirebaseAuth? _auth;
   GoogleSignIn? _googleSignIn;
   bool _isInitialized = false;
+  String? _lastSyncedUid;
 
   bool get isInitialized => _isInitialized;
 
@@ -25,6 +26,15 @@ class AuthService {
           );
         }
         _isInitialized = true;
+        // Mỗi khi có phiên đăng nhập (kể cả khi tải lại trang), đồng bộ hồ sơ sang Supabase
+        _auth!.authStateChanges().listen((user) {
+          if (user != null && user.uid != _lastSyncedUid) {
+            _lastSyncedUid = user.uid;
+            SupabaseService().syncUserProfile(user);
+          } else if (user == null) {
+            _lastSyncedUid = null;
+          }
+        });
       }
     } catch (e) {
       debugPrint('AuthService initialize warning: $e');
@@ -59,6 +69,8 @@ class AuthService {
         final GoogleAuthProvider googleProvider = GoogleAuthProvider();
         googleProvider.addScope('email');
         googleProvider.addScope('profile');
+        // Luôn cho chọn tài khoản => dễ chuyển giữa nhiều tài khoản khi kiểm thử
+        googleProvider.setCustomParameters({'prompt': 'select_account'});
         credential = await _auth!.signInWithPopup(googleProvider);
       } else {
         // Trên Android / iOS: Sử dụng GoogleSignIn package
@@ -80,6 +92,7 @@ class AuthService {
 
       // Tự động đồng bộ hồ sơ người dùng sang bảng profiles trên Supabase
       if (credential.user != null) {
+        _lastSyncedUid = credential.user!.uid;
         await SupabaseService().syncUserProfile(credential.user!);
       }
 
