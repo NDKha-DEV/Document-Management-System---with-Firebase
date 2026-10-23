@@ -65,6 +65,10 @@ class CloudDocument {
   final DateTime? createdAt;
   final DateTime? updatedAt;
   final String? updatedBy;
+  final String? tags;
+  final String? locationName;
+  final double? latitude;
+  final double? longitude;
   final String? ownerName;
   final String? ownerEmail;
   final String? ownerAvatar;
@@ -86,6 +90,10 @@ class CloudDocument {
     this.fileName,
     this.fileSize = 0,
     this.isPublic = false,
+    this.tags,
+    this.locationName,
+    this.latitude,
+    this.longitude,
     this.createdAt,
     this.updatedAt,
     this.updatedBy,
@@ -94,6 +102,11 @@ class CloudDocument {
     this.ownerAvatar,
     this.permissions = const [],
   });
+
+  List<String> get tagList {
+    if (tags == null || tags!.trim().isEmpty) return [];
+    return tags!.split(',').map((t) => t.trim()).where((t) => t.isNotEmpty).toList();
+  }
 
   factory CloudDocument.fromMap(Map<String, dynamic> m) {
     final owner = m['profiles'] is Map ? m['profiles'] as Map : null;
@@ -113,6 +126,10 @@ class CloudDocument {
       fileName: m['file_name'] as String?,
       fileSize: (m['file_size'] as num?)?.toInt() ?? 0,
       isPublic: m['is_public'] == true,
+      tags: m['tags'] as String?,
+      locationName: m['location_name'] as String?,
+      latitude: (m['latitude'] as num?)?.toDouble(),
+      longitude: (m['longitude'] as num?)?.toDouble(),
       createdAt: _parseDate(m['created_at']),
       updatedAt: _parseDate(m['updated_at']),
       updatedBy: m['updated_by'] as String?,

@@ -4,6 +4,7 @@ import 'package:firebase_auth/firebase_auth.dart' as fb;
 import 'package:firebase_core/firebase_core.dart';
 import '../config/supabase_config.dart';
 import '../models/cloud_document.dart';
+import '../models/borrow_request.dart';
 
 /// Lỗi Supabase đã được dịch sang thông báo dễ hiểu.
 class CloudException implements Exception {

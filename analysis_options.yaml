@@ -6,6 +6,10 @@ analyzer:
     - "_legacy_cashew_code/**"
     - "packages/**"
     - "**/*.g.dart"
+    - build/**
+    - android/**
+    - ios/**
+    - web/**
 
 linter:
   rules:

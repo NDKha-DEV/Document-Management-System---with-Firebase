@@ -1,33 +1,33 @@
 {
   "project_info": {
-    "project_number": "1047174117640",
-    "project_id": "study-materials-app-8fcf8",
-    "storage_bucket": "study-materials-app-8fcf8.firebasestorage.app"
+    "project_number": "809729131441",
+    "project_id": "document-bb712",
+    "storage_bucket": "document-bb712.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:1047174117640:android:67f15b45c22e6526e1d4bd",
+        "mobilesdk_app_id": "1:809729131441:android:ea0053cba3bdb593d23390",
         "android_client_info": {
           "package_name": "com.budget.tracker_app"
         }
       },
       "oauth_client": [
         {
-          "client_id": "1047174117640-9rgjp7lcsfalv97evrkbft3n31i9tggm.apps.googleusercontent.com",
+          "client_id": "809729131441-n0qnqlbstmjvo7vlo4tas4jsonm8gmhk.apps.googleusercontent.com",
           "client_type": 3
         }
       ],
       "api_key": [
         {
-          "current_key": "AIzaSyCw9TEiU9ib_RJ_dqkSGVJHSfPVPqQPpRA"
+          "current_key": "AIzaSyCFEK49qIDnImxhlEukgmDv8Wb7jNt5obY"
         }
       ],
       "services": {
         "appinvite_service": {
           "other_platform_oauth_client": [
             {
-              "client_id": "1047174117640-9rgjp7lcsfalv97evrkbft3n31i9tggm.apps.googleusercontent.com",
+              "client_id": "809729131441-n0qnqlbstmjvo7vlo4tas4jsonm8gmhk.apps.googleusercontent.com",
               "client_type": 3
             }
           ]

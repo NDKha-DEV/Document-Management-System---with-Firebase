@@ -22,6 +22,7 @@ class DocumentsDao extends DatabaseAccessor<StudyDatabase>
     String? docTypeFk,
     int? status,
     String? searchQuery,
+    String? tagFilter,
     bool? isPinnedOnly,
   }) {
     final query = select(documents).join([
@@ -45,10 +46,17 @@ class DocumentsDao extends DatabaseAccessor<StudyDatabase>
       query.where(documents.isPinned.equals(true));
     }
 
+    if (tagFilter != null && tagFilter.trim().isNotEmpty) {
+      final tagTerm = '%${tagFilter.trim().toLowerCase()}%';
+      query.where(documents.tags.lower().like(tagTerm));
+    }
+
     if (searchQuery != null && searchQuery.trim().isNotEmpty) {
       final term = '%${searchQuery.trim().toLowerCase()}%';
       query.where(documents.title.lower().like(term) |
-          documents.note.lower().like(term));
+          documents.note.lower().like(term) |
+          documents.tags.lower().like(term) |
+          documents.locationName.lower().like(term));
     }
 
     query.orderBy([

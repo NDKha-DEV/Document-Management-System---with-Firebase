@@ -35,21 +35,20 @@ class DefaultFirebaseOptions {
   }
 
   static const FirebaseOptions web = FirebaseOptions(
-    apiKey: 'AIzaSyAaJKuJ7q4KS7ZutS8caYgeZIcFNHBiIt8',
-    appId: '1:1047174117640:web:99ff5f6f88a138dbe1d4bd',
-    messagingSenderId: '1047174117640',
-    projectId: 'study-materials-app-8fcf8',
-    authDomain: 'study-materials-app-8fcf8.firebaseapp.com',
-    storageBucket: 'study-materials-app-8fcf8.firebasestorage.app',
-    measurementId: 'G-091P33RL96',
+    apiKey: 'AIzaSyCd1bDmOaldwBeDc4UzZR1WxN0sNRDyr4g',
+    appId: '1:809729131441:web:3eb094eba69512e7d23390',
+    messagingSenderId: '809729131441',
+    projectId: 'document-bb712',
+    authDomain: 'document-bb712.firebaseapp.com',
+    storageBucket: 'document-bb712.firebasestorage.app',
   );
 
   static const FirebaseOptions android = FirebaseOptions(
-    apiKey: 'AIzaSyCw9TEiU9ib_RJ_dqkSGVJHSfPVPqQPpRA',
-    appId: '1:1047174117640:android:67f15b45c22e6526e1d4bd',
-    messagingSenderId: '1047174117640',
-    projectId: 'study-materials-app-8fcf8',
-    storageBucket: 'study-materials-app-8fcf8.firebasestorage.app',
+    apiKey: 'AIzaSyCFEK49qIDnImxhlEukgmDv8Wb7jNt5obY',
+    appId: '1:809729131441:android:ea0053cba3bdb593d23390',
+    messagingSenderId: '809729131441',
+    projectId: 'document-bb712',
+    storageBucket: 'document-bb712.firebasestorage.app',
   );
   static const FirebaseOptions ios = FirebaseOptions(
     apiKey: 'AIzaSyA4to3U3iaQ4U44DprGQgN0wKIV-_5nHFs',

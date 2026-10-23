@@ -868,6 +868,29 @@ class $DocumentsTable extends Documents
       defaultConstraints:
           GeneratedColumn.constraintIsAlways('CHECK ("is_pinned" IN (0, 1))'),
       defaultValue: const Constant(false));
+  static const VerificationMeta _tagsMeta = const VerificationMeta('tags');
+  @override
+  late final GeneratedColumn<String> tags = GeneratedColumn<String>(
+      'tags', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _locationNameMeta =
+      const VerificationMeta('locationName');
+  @override
+  late final GeneratedColumn<String> locationName = GeneratedColumn<String>(
+      'location_name', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _latitudeMeta =
+      const VerificationMeta('latitude');
+  @override
+  late final GeneratedColumn<double> latitude = GeneratedColumn<double>(
+      'latitude', aliasedName, true,
+      type: DriftSqlType.double, requiredDuringInsert: false);
+  static const VerificationMeta _longitudeMeta =
+      const VerificationMeta('longitude');
+  @override
+  late final GeneratedColumn<double> longitude = GeneratedColumn<double>(
+      'longitude', aliasedName, true,
+      type: DriftSqlType.double, requiredDuringInsert: false);
   static const VerificationMeta _dateTimeCreatedMeta =
       const VerificationMeta('dateTimeCreated');
   @override
@@ -892,6 +915,10 @@ class $DocumentsTable extends Documents
         dueDate,
         status,
         isPinned,
+        tags,
+        locationName,
+        latitude,
+        longitude,
         dateTimeCreated,
         dateTimeModified
       ];
@@ -961,6 +988,24 @@ class $DocumentsTable extends Documents
       context.handle(_isPinnedMeta,
           isPinned.isAcceptableOrUnknown(data['is_pinned']!, _isPinnedMeta));
     }
+    if (data.containsKey('tags')) {
+      context.handle(
+          _tagsMeta, tags.isAcceptableOrUnknown(data['tags']!, _tagsMeta));
+    }
+    if (data.containsKey('location_name')) {
+      context.handle(
+          _locationNameMeta,
+          locationName.isAcceptableOrUnknown(
+              data['location_name']!, _locationNameMeta));
+    }
+    if (data.containsKey('latitude')) {
+      context.handle(_latitudeMeta,
+          latitude.isAcceptableOrUnknown(data['latitude']!, _latitudeMeta));
+    }
+    if (data.containsKey('longitude')) {
+      context.handle(_longitudeMeta,
+          longitude.isAcceptableOrUnknown(data['longitude']!, _longitudeMeta));
+    }
     if (data.containsKey('date_time_created')) {
       context.handle(
           _dateTimeCreatedMeta,
@@ -1006,6 +1051,14 @@ class $DocumentsTable extends Documents
           .read(DriftSqlType.int, data['${effectivePrefix}status'])!,
       isPinned: attachedDatabase.typeMapping
           .read(DriftSqlType.bool, data['${effectivePrefix}is_pinned'])!,
+      tags: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}tags']),
+      locationName: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}location_name']),
+      latitude: attachedDatabase.typeMapping
+          .read(DriftSqlType.double, data['${effectivePrefix}latitude']),
+      longitude: attachedDatabase.typeMapping
+          .read(DriftSqlType.double, data['${effectivePrefix}longitude']),
       dateTimeCreated: attachedDatabase.typeMapping.read(
           DriftSqlType.dateTime, data['${effectivePrefix}date_time_created'])!,
       dateTimeModified: attachedDatabase.typeMapping.read(
@@ -1030,6 +1083,10 @@ class Document extends DataClass implements Insertable<Document> {
   final DateTime? dueDate;
   final int status;
   final bool isPinned;
+  final String? tags;
+  final String? locationName;
+  final double? latitude;
+  final double? longitude;
   final DateTime dateTimeCreated;
   final DateTime dateTimeModified;
   const Document(
@@ -1043,6 +1100,10 @@ class Document extends DataClass implements Insertable<Document> {
       this.dueDate,
       required this.status,
       required this.isPinned,
+      this.tags,
+      this.locationName,
+      this.latitude,
+      this.longitude,
       required this.dateTimeCreated,
       required this.dateTimeModified});
   @override
@@ -1066,6 +1127,18 @@ class Document extends DataClass implements Insertable<Document> {
     }
     map['status'] = Variable<int>(status);
     map['is_pinned'] = Variable<bool>(isPinned);
+    if (!nullToAbsent || tags != null) {
+      map['tags'] = Variable<String>(tags);
+    }
+    if (!nullToAbsent || locationName != null) {
+      map['location_name'] = Variable<String>(locationName);
+    }
+    if (!nullToAbsent || latitude != null) {
+      map['latitude'] = Variable<double>(latitude);
+    }
+    if (!nullToAbsent || longitude != null) {
+      map['longitude'] = Variable<double>(longitude);
+    }
     map['date_time_created'] = Variable<DateTime>(dateTimeCreated);
     map['date_time_modified'] = Variable<DateTime>(dateTimeModified);
     return map;
@@ -1089,6 +1162,16 @@ class Document extends DataClass implements Insertable<Document> {
           : Value(dueDate),
       status: Value(status),
       isPinned: Value(isPinned),
+      tags: tags == null && nullToAbsent ? const Value.absent() : Value(tags),
+      locationName: locationName == null && nullToAbsent
+          ? const Value.absent()
+          : Value(locationName),
+      latitude: latitude == null && nullToAbsent
+          ? const Value.absent()
+          : Value(latitude),
+      longitude: longitude == null && nullToAbsent
+          ? const Value.absent()
+          : Value(longitude),
       dateTimeCreated: Value(dateTimeCreated),
       dateTimeModified: Value(dateTimeModified),
     );
@@ -1108,6 +1191,10 @@ class Document extends DataClass implements Insertable<Document> {
       dueDate: serializer.fromJson<DateTime?>(json['dueDate']),
       status: serializer.fromJson<int>(json['status']),
       isPinned: serializer.fromJson<bool>(json['isPinned']),
+      tags: serializer.fromJson<String?>(json['tags']),
+      locationName: serializer.fromJson<String?>(json['locationName']),
+      latitude: serializer.fromJson<double?>(json['latitude']),
+      longitude: serializer.fromJson<double?>(json['longitude']),
       dateTimeCreated: serializer.fromJson<DateTime>(json['dateTimeCreated']),
       dateTimeModified: serializer.fromJson<DateTime>(json['dateTimeModified']),
     );
@@ -1126,6 +1213,10 @@ class Document extends DataClass implements Insertable<Document> {
       'dueDate': serializer.toJson<DateTime?>(dueDate),
       'status': serializer.toJson<int>(status),
       'isPinned': serializer.toJson<bool>(isPinned),
+      'tags': serializer.toJson<String?>(tags),
+      'locationName': serializer.toJson<String?>(locationName),
+      'latitude': serializer.toJson<double?>(latitude),
+      'longitude': serializer.toJson<double?>(longitude),
       'dateTimeCreated': serializer.toJson<DateTime>(dateTimeCreated),
       'dateTimeModified': serializer.toJson<DateTime>(dateTimeModified),
     };
@@ -1142,6 +1233,10 @@ class Document extends DataClass implements Insertable<Document> {
           Value<DateTime?> dueDate = const Value.absent(),
           int? status,
           bool? isPinned,
+          Value<String?> tags = const Value.absent(),
+          Value<String?> locationName = const Value.absent(),
+          Value<double?> latitude = const Value.absent(),
+          Value<double?> longitude = const Value.absent(),
           DateTime? dateTimeCreated,
           DateTime? dateTimeModified}) =>
       Document(
@@ -1156,6 +1251,11 @@ class Document extends DataClass implements Insertable<Document> {
         dueDate: dueDate.present ? dueDate.value : this.dueDate,
         status: status ?? this.status,
         isPinned: isPinned ?? this.isPinned,
+        tags: tags.present ? tags.value : this.tags,
+        locationName:
+            locationName.present ? locationName.value : this.locationName,
+        latitude: latitude.present ? latitude.value : this.latitude,
+        longitude: longitude.present ? longitude.value : this.longitude,
         dateTimeCreated: dateTimeCreated ?? this.dateTimeCreated,
         dateTimeModified: dateTimeModified ?? this.dateTimeModified,
       );
@@ -1172,6 +1272,10 @@ class Document extends DataClass implements Insertable<Document> {
           ..write('dueDate: $dueDate, ')
           ..write('status: $status, ')
           ..write('isPinned: $isPinned, ')
+          ..write('tags: $tags, ')
+          ..write('locationName: $locationName, ')
+          ..write('latitude: $latitude, ')
+          ..write('longitude: $longitude, ')
           ..write('dateTimeCreated: $dateTimeCreated, ')
           ..write('dateTimeModified: $dateTimeModified')
           ..write(')'))
@@ -1190,6 +1294,10 @@ class Document extends DataClass implements Insertable<Document> {
       dueDate,
       status,
       isPinned,
+      tags,
+      locationName,
+      latitude,
+      longitude,
       dateTimeCreated,
       dateTimeModified);
   @override
@@ -1206,6 +1314,10 @@ class Document extends DataClass implements Insertable<Document> {
           other.dueDate == this.dueDate &&
           other.status == this.status &&
           other.isPinned == this.isPinned &&
+          other.tags == this.tags &&
+          other.locationName == this.locationName &&
+          other.latitude == this.latitude &&
+          other.longitude == this.longitude &&
           other.dateTimeCreated == this.dateTimeCreated &&
           other.dateTimeModified == this.dateTimeModified);
 }
@@ -1221,6 +1333,10 @@ class DocumentsCompanion extends UpdateCompanion<Document> {
   final Value<DateTime?> dueDate;
   final Value<int> status;
   final Value<bool> isPinned;
+  final Value<String?> tags;
+  final Value<String?> locationName;
+  final Value<double?> latitude;
+  final Value<double?> longitude;
   final Value<DateTime> dateTimeCreated;
   final Value<DateTime> dateTimeModified;
   final Value<int> rowid;
@@ -1235,6 +1351,10 @@ class DocumentsCompanion extends UpdateCompanion<Document> {
     this.dueDate = const Value.absent(),
     this.status = const Value.absent(),
     this.isPinned = const Value.absent(),
+    this.tags = const Value.absent(),
+    this.locationName = const Value.absent(),
+    this.latitude = const Value.absent(),
+    this.longitude = const Value.absent(),
     this.dateTimeCreated = const Value.absent(),
     this.dateTimeModified = const Value.absent(),
     this.rowid = const Value.absent(),
@@ -1250,6 +1370,10 @@ class DocumentsCompanion extends UpdateCompanion<Document> {
     this.dueDate = const Value.absent(),
     this.status = const Value.absent(),
     this.isPinned = const Value.absent(),
+    this.tags = const Value.absent(),
+    this.locationName = const Value.absent(),
+    this.latitude = const Value.absent(),
+    this.longitude = const Value.absent(),
     required DateTime dateTimeCreated,
     required DateTime dateTimeModified,
     this.rowid = const Value.absent(),
@@ -1270,6 +1394,10 @@ class DocumentsCompanion extends UpdateCompanion<Document> {
     Expression<DateTime>? dueDate,
     Expression<int>? status,
     Expression<bool>? isPinned,
+    Expression<String>? tags,
+    Expression<String>? locationName,
+    Expression<double>? latitude,
+    Expression<double>? longitude,
     Expression<DateTime>? dateTimeCreated,
     Expression<DateTime>? dateTimeModified,
     Expression<int>? rowid,
@@ -1285,6 +1413,10 @@ class DocumentsCompanion extends UpdateCompanion<Document> {
       if (dueDate != null) 'due_date': dueDate,
       if (status != null) 'status': status,
       if (isPinned != null) 'is_pinned': isPinned,
+      if (tags != null) 'tags': tags,
+      if (locationName != null) 'location_name': locationName,
+      if (latitude != null) 'latitude': latitude,
+      if (longitude != null) 'longitude': longitude,
       if (dateTimeCreated != null) 'date_time_created': dateTimeCreated,
       if (dateTimeModified != null) 'date_time_modified': dateTimeModified,
       if (rowid != null) 'rowid': rowid,
@@ -1302,6 +1434,10 @@ class DocumentsCompanion extends UpdateCompanion<Document> {
       Value<DateTime?>? dueDate,
       Value<int>? status,
       Value<bool>? isPinned,
+      Value<String?>? tags,
+      Value<String?>? locationName,
+      Value<double?>? latitude,
+      Value<double?>? longitude,
       Value<DateTime>? dateTimeCreated,
       Value<DateTime>? dateTimeModified,
       Value<int>? rowid}) {
@@ -1316,6 +1452,10 @@ class DocumentsCompanion extends UpdateCompanion<Document> {
       dueDate: dueDate ?? this.dueDate,
       status: status ?? this.status,
       isPinned: isPinned ?? this.isPinned,
+      tags: tags ?? this.tags,
+      locationName: locationName ?? this.locationName,
+      latitude: latitude ?? this.latitude,
+      longitude: longitude ?? this.longitude,
       dateTimeCreated: dateTimeCreated ?? this.dateTimeCreated,
       dateTimeModified: dateTimeModified ?? this.dateTimeModified,
       rowid: rowid ?? this.rowid,
@@ -1355,6 +1495,18 @@ class DocumentsCompanion extends UpdateCompanion<Document> {
     if (isPinned.present) {
       map['is_pinned'] = Variable<bool>(isPinned.value);
     }
+    if (tags.present) {
+      map['tags'] = Variable<String>(tags.value);
+    }
+    if (locationName.present) {
+      map['location_name'] = Variable<String>(locationName.value);
+    }
+    if (latitude.present) {
+      map['latitude'] = Variable<double>(latitude.value);
+    }
+    if (longitude.present) {
+      map['longitude'] = Variable<double>(longitude.value);
+    }
     if (dateTimeCreated.present) {
       map['date_time_created'] = Variable<DateTime>(dateTimeCreated.value);
     }
@@ -1380,6 +1532,10 @@ class DocumentsCompanion extends UpdateCompanion<Document> {
           ..write('dueDate: $dueDate, ')
           ..write('status: $status, ')
           ..write('isPinned: $isPinned, ')
+          ..write('tags: $tags, ')
+          ..write('locationName: $locationName, ')
+          ..write('latitude: $latitude, ')
+          ..write('longitude: $longitude, ')
           ..write('dateTimeCreated: $dateTimeCreated, ')
           ..write('dateTimeModified: $dateTimeModified, ')
           ..write('rowid: $rowid')
@@ -2670,6 +2826,10 @@ typedef $$DocumentsTableInsertCompanionBuilder = DocumentsCompanion Function({
   Value<DateTime?> dueDate,
   Value<int> status,
   Value<bool> isPinned,
+  Value<String?> tags,
+  Value<String?> locationName,
+  Value<double?> latitude,
+  Value<double?> longitude,
   required DateTime dateTimeCreated,
   required DateTime dateTimeModified,
   Value<int> rowid,
@@ -2685,6 +2845,10 @@ typedef $$DocumentsTableUpdateCompanionBuilder = DocumentsCompanion Function({
   Value<DateTime?> dueDate,
   Value<int> status,
   Value<bool> isPinned,
+  Value<String?> tags,
+  Value<String?> locationName,
+  Value<double?> latitude,
+  Value<double?> longitude,
   Value<DateTime> dateTimeCreated,
   Value<DateTime> dateTimeModified,
   Value<int> rowid,
@@ -2720,6 +2884,10 @@ class $$DocumentsTableTableManager extends RootTableManager<
             Value<DateTime?> dueDate = const Value.absent(),
             Value<int> status = const Value.absent(),
             Value<bool> isPinned = const Value.absent(),
+            Value<String?> tags = const Value.absent(),
+            Value<String?> locationName = const Value.absent(),
+            Value<double?> latitude = const Value.absent(),
+            Value<double?> longitude = const Value.absent(),
             Value<DateTime> dateTimeCreated = const Value.absent(),
             Value<DateTime> dateTimeModified = const Value.absent(),
             Value<int> rowid = const Value.absent(),
@@ -2735,6 +2903,10 @@ class $$DocumentsTableTableManager extends RootTableManager<
             dueDate: dueDate,
             status: status,
             isPinned: isPinned,
+            tags: tags,
+            locationName: locationName,
+            latitude: latitude,
+            longitude: longitude,
             dateTimeCreated: dateTimeCreated,
             dateTimeModified: dateTimeModified,
             rowid: rowid,
@@ -2750,6 +2922,10 @@ class $$DocumentsTableTableManager extends RootTableManager<
             Value<DateTime?> dueDate = const Value.absent(),
             Value<int> status = const Value.absent(),
             Value<bool> isPinned = const Value.absent(),
+            Value<String?> tags = const Value.absent(),
+            Value<String?> locationName = const Value.absent(),
+            Value<double?> latitude = const Value.absent(),
+            Value<double?> longitude = const Value.absent(),
             required DateTime dateTimeCreated,
             required DateTime dateTimeModified,
             Value<int> rowid = const Value.absent(),
@@ -2765,6 +2941,10 @@ class $$DocumentsTableTableManager extends RootTableManager<
             dueDate: dueDate,
             status: status,
             isPinned: isPinned,
+            tags: tags,
+            locationName: locationName,
+            latitude: latitude,
+            longitude: longitude,
             dateTimeCreated: dateTimeCreated,
             dateTimeModified: dateTimeModified,
             rowid: rowid,
@@ -2837,6 +3017,26 @@ class $$DocumentsTableFilterComposer
       builder: (column, joinBuilders) =>
           ColumnFilters(column, joinBuilders: joinBuilders));
 
+  ColumnFilters<String> get tags => $state.composableBuilder(
+      column: $state.table.tags,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get locationName => $state.composableBuilder(
+      column: $state.table.locationName,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<double> get latitude => $state.composableBuilder(
+      column: $state.table.latitude,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<double> get longitude => $state.composableBuilder(
+      column: $state.table.longitude,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
   ColumnFilters<DateTime> get dateTimeCreated => $state.composableBuilder(
       column: $state.table.dateTimeCreated,
       builder: (column, joinBuilders) =>
@@ -2898,6 +3098,26 @@ class $$DocumentsTableOrderingComposer
 
   ColumnOrderings<bool> get isPinned => $state.composableBuilder(
       column: $state.table.isPinned,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get tags => $state.composableBuilder(
+      column: $state.table.tags,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get locationName => $state.composableBuilder(
+      column: $state.table.locationName,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<double> get latitude => $state.composableBuilder(
+      column: $state.table.latitude,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<double> get longitude => $state.composableBuilder(
+      column: $state.table.longitude,
       builder: (column, joinBuilders) =>
           ColumnOrderings(column, joinBuilders: joinBuilders));
 

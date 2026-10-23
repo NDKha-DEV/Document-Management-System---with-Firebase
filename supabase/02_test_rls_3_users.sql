@@ -44,8 +44,8 @@ BEGIN
             json_build_object('role', 'anon', 'iss', 'supabase')::TEXT, true);
     ELSE
         PERFORM set_config('request.jwt.claims', json_build_object(
-            'iss', coalesce(p_iss, 'https://securetoken.google.com/study-materials-app-8fcf8'),
-            'aud', 'study-materials-app-8fcf8',
+            'iss', coalesce(p_iss, 'https://securetoken.google.com/document-bb712'),
+            'aud', 'document-bb712',
             'sub', p_uid,
             'email', p_email
         )::TEXT, true);

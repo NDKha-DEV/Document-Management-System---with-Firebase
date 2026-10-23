@@ -105,7 +105,7 @@ class _AddEditDocumentPageState extends State<AddEditDocumentPage> {
     if (result != null && result.files.isNotEmpty) {
       final file = result.files.single;
       setState(() {
-        _localFilePath = file.path;
+        _localFilePath = kIsWeb ? null : file.path;
         _pickedFileName = file.name;
         _fileBytes = file.bytes;
       });

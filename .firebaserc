@@ -1,5 +1,8 @@
 {
   "projects": {
-    "default": "study-materials-app-8fcf8"
-  }
+    "default": "document-bb712",
+    "y": "document-bb712"
+  },
+  "targets": {},
+  "etags": {}
 }

@@ -6,12 +6,12 @@ class SupabaseConfig {
   /// --dart-define hoặc trong màn hình Cài đặt.
   static const String defaultUrl = String.fromEnvironment(
     'SUPABASE_URL',
-    defaultValue: 'https://ieuqfancpwxgukmlnumz.supabase.co',
+    defaultValue: 'https://jtffhgrmcanfibeijdqn.supabase.co',
   );
 
   static const String defaultAnonKey = String.fromEnvironment(
     'SUPABASE_ANON_KEY',
-    defaultValue: 'sb_publishable_oJNZWUqrHuiQ3XWq0-q5Uw_FERLQZXR',
+    defaultValue: 'sb_publishable_iohX_EtJ0OSmywVflkuRXw_fafOADEd',
   );
 
   static String _activeUrl = defaultUrl;
